@@ -3,7 +3,7 @@ project: DS_MessageProtocol
 type: reference
 status: stable
 tags: [packages, nuget]
-updated: 2026-09-11
+updated: 2026-09-13
 ---
 
 # Packages
@@ -12,7 +12,7 @@ updated: 2026-09-11
 
 | NuGet 패키지 | 프로젝트 경로 | TFM | 설명 |
 | -------------- | --------------- | ----- | ------ |
-| **MessageProtocol** | `Source/MessageProtocol/` | netstandard2.1 | 메인 패키지. Core 런타임 + analyzers에 CodeGenerator |
+| **MessageProtocol** | `Source/MessageProtocol/` | netstandard2.1 | 메인 패키지. Core 런타임 + CodeGenerator 를 NuGet 의존성으로 함께 설치 |
 | **MessageProtocol.Core** | `Source/MessageProtocol.Core/` | netstandard2.1; net6.0 | 직렬화 런타임 API |
 | **MessageProtocol.CodeGenerator** | `Source/MessageProtocol.CodeGenerator/` | netstandard2.0 | Roslyn 분석기/소스 생성기 (고급·세분화 참조용) |
 
@@ -35,17 +35,19 @@ flowchart LR
   MP[MessageProtocol]
   Core[MessageProtocol.Core]
   Gen[MessageProtocol.CodeGenerator]
-  MP -->|ProjectReference| Core
-  MP -.->|Analyzer Ref| Gen
+  MP -->|NuGet 의존성| Core
+  MP -->|NuGet 의존성| Gen
 ```
 
 | 참조 | 방식 |
 | ------ | ------ |
-| MessageProtocol → Core | 일반 `ProjectReference` (런타임 DLL 포함) |
-| MessageProtocol → CodeGenerator | `OutputItemType=Analyzer`, `ReferenceOutputAssembly=false` |
-| MessageProtocol pack | `analyzers/dotnet/cs/MessageProtocol.CodeGenerator.dll` 삽입 |
+| MessageProtocol → Core | 일반 `ProjectReference` → nuspec 의존성 (`MessageProtocol.Core`) |
+| MessageProtocol → CodeGenerator | `OutputItemType=Analyzer` `ProjectReference` → nuspec 의존성 (`MessageProtocol.CodeGenerator`). `ReferenceOutputAssembly=false` 를 붙이면 NuGet pack 이 의존성을 만들지 않는다(실증, 2026-09-13) |
+| MessageProtocol pack | 메타 패키지 — 런타임 DLL만 `lib/`, CodeGenerator는 의존성으로 전파 (기존 `analyzers/dotnet/cs` 동봉 제거) |
 | CodeGenerator pack | `IncludeBuildOutput=false`, analyzer DLL만 `analyzers/dotnet/cs` |
 | Shared | Core·Generator 모두 `Compile Include` + Link (`MESSAGE_PROTOCOL_CODE_GENERATOR` 상수로 생성기 측 internal) |
+
+**단일 설치 검증(2026-09-13)**: 로컬 피드에서 `MessageProtocol` 만 설치한 소비자 프로젝트에서 ① 복원 그래프(`project.assets.json`)에 `MessageProtocol.Core`·`MessageProtocol.CodeGenerator` 모두 포함 ② 생성기 전용 static 멤버(`MessageId`) 참조 컴파일 성공 → 소스 생성기가 의존성 경로로 정상 전파됨을 확인. 주의: PackTask 는 ProjectReference 유래 의존성에 `exclude="Build,Analyzers"` 를 강제로 붙이지만, 전이(transitive) 소스 생성기 적용은 막지 않는다(실증).
 
 ## 버전·빌드 구성
 

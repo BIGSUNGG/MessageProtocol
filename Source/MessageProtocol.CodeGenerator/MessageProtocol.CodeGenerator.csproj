@@ -2,7 +2,10 @@
 
   <PropertyGroup>
     <PackageId>MessageProtocol.CodeGenerator</PackageId>
-    <Description>Roslyn 소스 생성기: MessageProtocol 메시지 타입용 Serialize/Deserialize 및 등록 코드 생성.</Description>
+    <Description>Roslyn source generator for the MessageProtocol serialization library: emits Serialize/Deserialize implementations, message IDs, and self-registration code for [Message]-decorated partial types at compile time, and reports MSGPROT0xx diagnostics for invalid message declarations.
+
+Analyzer-only package (netstandard2.0). For most apps, install the main MessageProtocol package instead — it pulls this in automatically.</Description>
+    <PackageTags>roslyn;source-generator;code-generation;analyzer;serialization</PackageTags>
     <TargetFramework>netstandard2.0</TargetFramework>
     <LangVersion>latest</LangVersion>
 

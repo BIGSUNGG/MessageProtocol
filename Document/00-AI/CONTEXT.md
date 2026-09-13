@@ -3,7 +3,7 @@ project: DS_MessageProtocol
 type: context
 status: stable
 tags: [ai, context]
-updated: 2026-09-11
+updated: 2026-09-13
 ---
 
 # CONTEXT — DS_MessageProtocol
@@ -38,7 +38,7 @@ updated: 2026-09-11
 
 | NuGet 패키지 | 설명 |
 | -------------- | ------ |
-| **MessageProtocol** | 메인 패키지. 런타임 DLL + analyzers에 CodeGenerator 포함 |
+| **MessageProtocol** | 메인 패키지. Core·CodeGenerator 를 NuGet 의존성으로 함께 설치 |
 | **MessageProtocol.Core** | 직렬화 런타임 API (`MessageSerializer`, 메시지 계약) |
 | **MessageProtocol.CodeGenerator** | Roslyn 분석기/소스 생성기 (고급·세분화 참조용, netstandard2.0) |
 

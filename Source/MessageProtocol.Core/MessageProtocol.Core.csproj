@@ -2,7 +2,12 @@
 
   <PropertyGroup>
     <PackageId>MessageProtocol.Core</PackageId>
-    <Description>MessageProtocol 런타임 직렬화 API 및 메시지 계약 (MessageSerializer, 메시지 속성·인터페이스).</Description>
+    <Description>Runtime half of the MessageProtocol binary serialization library: the MessageSerializer API — registration, dispatch, generic hot paths with delegate caches, and pooled buffers — plus the message contract attributes and interfaces.
+
+Standalone it falls back to reflection; for compile-time generated serializers install the main MessageProtocol package (bundles this runtime and the source generator) or add MessageProtocol.CodeGenerator alongside.
+
+Targets netstandard2.1 (Unity-compatible) and net6.0+.</Description>
+    <PackageTags>serialization;binary;unity;game;networking;messages</PackageTags>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- net6+ 소비자는 ModuleInitializer polyfill을 보지 않아야 함 (CS0433 방지) -->
     <TargetFramework></TargetFramework>

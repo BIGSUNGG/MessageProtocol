@@ -2,6 +2,13 @@
 
 문서 변경 기록. 최신이 위.
 
+## 2026-09-13 (MessageProtocol 단일 설치로 CodeGenerator 전파)
+
+- `Source/MessageProtocol/MessageProtocol.csproj`: CodeGenerator `ProjectReference`에서 `ReferenceOutputAssembly="false"` 제거 — NuGet pack 이 nuspec 의존성 `MessageProtocol.CodeGenerator` 를 생성, 이제 `MessageProtocol` 단일 설치로 Core·CodeGenerator 가 함께 설치된다. 기존 `analyzers/dotnet/cs` DLL 동봉 타깃(`IncludeCodeGeneratorAnalyzerInPackage`) 제거(동봉 → 의존성 전파로 전환, 이중 적용 방지).
+- 실증: 로컬 피드 3패키지 → 소비자 프로젝트에서 `MessageProtocol` 만 참조해 복원 그래프에 Core·CodeGenerator 포함 + 생성기 전용 멤버(`MessageId`) 컴파일 성공. 주의점 2건 기록: ① `ReferenceOutputAssembly=false` 면 의존성 미생성, ② PackTask 가 의존성에 강제하는 `exclude="Build,Analyzers"` 는 전이 소스 생성기 적용을 막지 않음. 검증 시 글로벌 NuGet 캐시의 구버전 nupkg 가 로컬 피드를 가려 결과를 오염시킬 수 있음 — `RestorePackagesPath` 로 격리(`Packages.md` 패키지 관계 참고).
+- 솔루션 빌드 오류 0, 테스트 323×2 TFM 통과, Sandbox 45 시나리오 통과.
+- 3패키지 NuGet `<Description>` 을 영어 기능 중심 설명으로 전면 보강(검색 노출용 `<PackageTags>` 추가) — 컴파일 타임 직렬화·자가 등록·pooled 경로·Unity 호환 등 README 근거 내용만 기술.
+
 ## 2026-09-11 (4) (3.0.0 배포)
 
 - 버전 2.4.0 → **3.0.0** (`Source/Directory.Build.props`) — 파괴 변경 릴리스: `MessageCategoryAttribute`·4종 종류 속성 제거, `[Message(MessageKind, id, category)]` 단일화, `MessageFlag` 멤버 개명(Parent/Child/IdMessage). 와이어 형식 불변.

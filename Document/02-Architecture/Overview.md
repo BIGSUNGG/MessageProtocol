@@ -3,7 +3,7 @@ project: DS_MessageProtocol
 type: architecture
 status: stable
 tags: [architecture, overview]
-updated: 2026-08-31
+updated: 2026-09-13
 ---
 
 # Architecture Overview
@@ -43,7 +43,7 @@ flowchart TB
   Shared[Source/Shared]
   App --> Meta
   Meta --> Core
-  Meta -.->|analyzers/dotnet/cs| Gen
+  Meta --> Gen
   Shared --> Core
   Shared --> Gen
 ```

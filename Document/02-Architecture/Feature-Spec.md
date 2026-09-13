@@ -3,7 +3,7 @@ project: DS_MessageProtocol
 type: architecture
 status: approved
 tags: [feature-spec, rewrite, parity]
-updated: 2026-09-11
+updated: 2026-09-13
 ---
 
 # Feature Spec — 재작성 프로젝트 지원 기능
@@ -151,7 +151,7 @@ decimal 와이어 16바이트는 재해석 전에 flags 를 검증한다 — 스
 
 | 패키지 | 내용 |
 | -------- | ------ |
-| **MessageProtocol** | 앱용 단일 진입점: Core 런타임 + 생성기를 `analyzers/dotnet/cs`로 동봉 |
+| **MessageProtocol** | 앱용 단일 진입점: Core 런타임 + CodeGenerator 를 NuGet 의존성으로 함께 설치 |
 | **MessageProtocol.Core** | 런타임 API 단독 |
 | **MessageProtocol.CodeGenerator** | 생성기 단독 (고급·세분화 참조용) |
 

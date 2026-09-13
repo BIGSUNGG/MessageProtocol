@@ -2,19 +2,19 @@
 
   <PropertyGroup>
     <PackageId>MessageProtocol</PackageId>
-    <Description>메시지 프로토콜 직렬화 메인 패키지. MessageProtocol.Core 런타임과 소스 생성 분석기를 함께 포함합니다.</Description>
-    <!-- NuGet 단일 패키지에 Roslyn 분석기 DLL 포함(analyzers/dotnet/cs) -->
-    <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);IncludeCodeGeneratorAnalyzerInPackage</TargetsForTfmSpecificContentInPackage>
+    <Description>Compile-time binary message serialization for .NET — built for game servers, networking, and other allocation-sensitive applications.
+
+Declare partial message classes with [Message]; the included Roslyn source generator emits Serialize/Deserialize code, and message types self-register on module load. No reflection on the hot path, no runtime codegen, no manual registration. Supports message inheritance families (Parent/Child), hash-derived or manual message IDs, a compact little-endian wire format, and pooled-buffer send paths.
+
+Targets netstandard2.1 (Unity-compatible) and net6.0+. This single package installs everything: MessageProtocol.Core (runtime) and MessageProtocol.CodeGenerator (source generator) come in as dependencies.</Description>
+    <PackageTags>serialization;binary;source-generator;unity;game;networking;messages</PackageTags>
   </PropertyGroup>
 
-  <Target Name="IncludeCodeGeneratorAnalyzerInPackage">
-    <ItemGroup>
-      <TfmSpecificPackageFile Include="$(MSBuildThisFileDirectory)..\MessageProtocol.CodeGenerator\bin\$(Configuration)\netstandard2.0\MessageProtocol.CodeGenerator.dll" PackagePath="analyzers/dotnet/cs" />
-    </ItemGroup>
-  </Target>
-
   <ItemGroup>
-    <ProjectReference Include="..\MessageProtocol.CodeGenerator\MessageProtocol.CodeGenerator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <!-- ReferenceOutputAssembly=false 면 NuGet pack 이 nuspec 의존성을 만들지 않는다(실증 확인).
+         기본(true) 유지 시 nuspec 에 MessageProtocol.CodeGenerator 의존성이 생성되어
+         MessageProtocol 단일 설치로 소스 생성기까지 전파된다. -->
+    <ProjectReference Include="..\MessageProtocol.CodeGenerator\MessageProtocol.CodeGenerator.csproj" OutputItemType="Analyzer" />
     <ProjectReference Include="..\MessageProtocol.Core\MessageProtocol.Core.csproj" />
   </ItemGroup>
 
