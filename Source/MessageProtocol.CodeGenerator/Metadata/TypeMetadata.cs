@@ -64,6 +64,12 @@ namespace MessageProtocol.CodeGenerator.Metadata
         /// </summary>
         public bool IsGenericWireMessage => Symbol.IsGenericType && IsStandaloneMessage;
 
+        /// <summary>
+        /// FullName 해시가 0 으로 조립되는 Child — 0 은 예약값이라 MSGPROT017 로 생성이 거부된다(자동 재해시 없음).
+        /// Generate 의 거부 지점과 충돌 판정 게이트가 같은 판정을 공유한다(KI-43).
+        /// </summary>
+        internal bool IsHashZeroGroupElement => IsHashIdMessage && IsGroupElementMessage && GroupElementMessageId == 0;
+
         public TypeMetadata(INamedTypeSymbol typeSymbol, AttributeReferences references)
         {
             Symbol = typeSymbol;

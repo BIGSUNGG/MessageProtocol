@@ -99,7 +99,7 @@ decimal 와이어 16바이트는 재해석 전에 flags 를 검증한다 — 스
   - `MSGPROT005` ID 값 범위 초과
   - `MSGPROT006` 미지원 멤버 타입
   - `MSGPROT007` 메시지 속성 중복 (경고 — 상호 배타, 생성 건너뜀. Legacy에 없는 신규 진단. 3.0.0 종류 속성 통합 이후 단일 `[Message]`(`AllowMultiple = false`) 이라 발생 불가 — 이중 히스토리 보존 목록)
-  - `MSGPROT008` 잘못된 GenericMessage 선언 (비메시지 구성 대상·미바운드 제네릭·ClassId 누락/중복/**범위 초과(0 또는 2^24 이상 — 방치하면 모듈 이니셜라이저에서 `TypeInitializationException`)**·컴파일 내 중복 선언)
+  - `MSGPROT008` 잘못된 GenericMessage 선언 (비메시지 구성 대상·미바운드 제네릭·ClassId 누락/중복/범위 초과(0 또는 2^24 이상 - 방치하면 모듈 이니셜라이저에서 `TypeInitializationException`)/컴파일 내 중복 선언/선언부가 생성 거부될 구성 - MSGPROT001·002·005·010·013·018 사유 전부. 방치하면 캐리러가 구현 없는 타입을 참조하는 CS0311 생성 코드 방출. 캐리러 방출 조건은 제네릭 게이트 판정(`TryGetRegisteredGenericWireMessageId`)으로 일원화하되 **거부는 이 컴파일 소스 선언 한정** — 메타데이터 전용 외부 어셈블리 선언은 원 컴파일의 게이트가 검증했고 크로스 어셈블리 중복은 ADR-0005 런타임 감지 계약을 따른다, KI-43)
   - `MSGPROT009` (삭제됨 — `MSGPROT008` 로 흡수)
   - `MSGPROT010` 메시지 타입 생성 불가 (추상 클래스·매개변수 없는 생성자 없음 — 포지셔널 레코드 등. Legacy에 없는 신규 진단)
   - `MSGPROT011` 멤버 대입 불가 (읽기 전용·초기화 전용 프로퍼티·읽기전용 필드 — 역직렬화 불가. Legacy에 없는 신규 진단)

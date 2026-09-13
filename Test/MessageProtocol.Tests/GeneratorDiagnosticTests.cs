@@ -1335,6 +1335,209 @@ public class GeneratorDiagnosticTests
     }
 
     [Fact]
+    public void MSGPROT014_계층_위반으로_거부될_타입과_같은_id여도_정상_타입은_거짓_양성을_받지_않는다()
+    {
+        // KI-43 회귀: MSGPROT003(루트 없는 요소)·MSGPROT004(루트의 루트 조상)으로 이미 거부될 타입은
+        // 생성·등록되지 않으므로 충돌 판정에서 빠져야 한다(KI-31 "실제로 등록될 형태만 센다").
+        // 빼놓으면 문제없는 상대 타입이 거짓 양성 MSGPROT014 로 생성이 막힌다.
+        var (diagnostics, generated, compileErrors) = RunGeneratorWithCompilation(Header + """
+            [Message(MessageKind.Parent, 9)]
+            public partial class RealRoot { public long Timestamp { get; set; } }
+
+            [Message(MessageKind.Child, 7)]
+            public partial class ValidChild : RealRoot { public int X { get; set; } }
+
+            [Message(MessageKind.Child, 7)]
+            public partial class OrphanChild { public int Y { get; set; } }
+            """ + Footer);
+
+        Assert.Contains(diagnostics, d => d.Id == "MSGPROT003");       // OrphanChild 만 계층 위반
+        Assert.DoesNotContain(diagnostics, d => d.Id == "MSGPROT014"); // ValidChild 거짓 양성 금지
+        Assert.Contains("partial class ValidChild", generated);
+        Assert.Empty(compileErrors);
+    }
+
+    [Fact]
+    public void MSGPROT014_MSGPROT018로_거부될_선언과_같은_id여도_정상_타입은_거짓_양성을_받지_않는다()
+    {
+        // KI-43 회귀: 정의 밖 kind 값((MessageKind)99)은 decode 가 실패해 TypeMetadata 가 Automatic
+        // 폴백 추론을 하므로, 게이트가 018 검사를 건너뛰면 거부될 선언이 Standalone 으로 세 count 된다.
+        // (NonId+id 조합은 decode 가 성공해 IsNonIdMessage 경로로 이미 제외된다 — 이 케이스가 진짜 갭이다.)
+        var (diagnostics, generated, compileErrors) = RunGeneratorWithCompilation(Header + """
+            [Message((MessageKind)99, id: 7)]
+            public partial class BrokenKind { public int X { get; set; } }
+
+            [Message(MessageKind.Standalone, 7)]
+            public partial class OkStandalone { public int Y { get; set; } }
+            """ + Footer);
+
+        Assert.Contains(diagnostics, d => d.Id == "MSGPROT018");       // BrokenKind 만 종류 위반
+        Assert.DoesNotContain(diagnostics, d => d.Id == "MSGPROT014"); // OkStandalone 거짓 양성 금지
+        Assert.Contains("partial class OkStandalone", generated);
+        Assert.Empty(compileErrors);
+    }
+
+    [Fact]
+    public void MSGPROT015_MSGPROT018로_거부될_제네릭_선언과_같은_키여도_정상_구성은_거짓_양성을_받지_않는다()
+    {
+        // KI-43 회귀(제네릭 변형): 정의 밖 kind 의 제네릭 선언은 decode 실패→Automatic 폴백 Standalone 로
+        // 세 count 되어 (MessageId, ClassId) 런타임 키 충돌 판정에 들어간다. 빼놓으면 정상 구성이
+        // 거짓 양성 MSGPROT015 로 등록 캐리어까지 잃는다. (NonId+id 조합은 decode 성공→IsNonIdMessage 로 이미 제외.)
+        var (diagnostics, generated, compileErrors) = RunGeneratorWithCompilation(Header + """
+            [Message((MessageKind)99, id: 5)]
+            [GenericMessage(typeof(BrokenGeneric<int>), ClassId = 1)]
+            public partial class BrokenGeneric<T> { public T? Value { get; set; } }
+
+            [Message(MessageKind.Standalone, 5)]
+            [GenericMessage(typeof(OkGeneric<int>), ClassId = 1)]
+            public partial class OkGeneric<T> { public T? Value { get; set; } }
+            """ + Footer);
+
+        Assert.Contains(diagnostics, d => d.Id == "MSGPROT018");       // BrokenGeneric 만 종류 위반
+        Assert.Contains(diagnostics, d => d.Id == "MSGPROT008");       // BrokenGeneric 구성의 캐리러 거부 진단
+        Assert.DoesNotContain(diagnostics, d => d.Id == "MSGPROT015"); // OkGeneric 구성 거짓 양성 금지
+        Assert.Contains("RegisterGenericConstruction<global::TestNs.OkGeneric<int>>(1)", generated);
+        Assert.Empty(compileErrors);
+    }
+
+    [Fact]
+    public void MSGPROT002로_거부될_타입과_같은_id여도_정상_타입은_거짓_양성을_받지_않는다()
+    {
+        // KI-43 2차(리뷰 라운드 1) 회귀: 중첩 컨테이닝 타입이 non-partial 인 메시지는 MSGPROT002 로
+        // 생성·등록되지 않으므로 충돌 판정에서 빠져야 한다. 게이트의 IsPartial 은 타입 자신만 봐서
+        // 이 타입이 카운트되면 같은 조립 id 의 최상위 정상 타입이 거짓 양성 MSGPROT014 로 생성을 잃는다.
+        var (diagnostics, generated, compileErrors) = RunGeneratorWithCompilation(Header + """
+            public class NestOuter
+            {
+                [Message(MessageKind.Standalone, 7)]
+                public partial class NestedStand { public int X { get; set; } }
+            }
+
+            [Message(MessageKind.Standalone, 7)]
+            public partial class OkTopStand { public int Y { get; set; } }
+            """ + Footer);
+
+        Assert.Contains(diagnostics, d => d.Id == "MSGPROT002");       // NestedStand 만 중첩 partial 위반
+        Assert.DoesNotContain(diagnostics, d => d.Id == "MSGPROT014"); // OkTopStand 거짓 양성 금지
+        Assert.Contains("partial class OkTopStand", generated);
+        Assert.Empty(compileErrors);
+    }
+
+    [Fact]
+    public void 구성_선언이_MSGPROT005로_거부되면_캐리러도_방출되지_않는다()
+    {
+        // KI-43 2차 회귀: 캐리러 가드가 018 만 보면 id 범위 초과(MSGPROT005)로 거부될 선언의 캐리러가
+        // 그래도 방출된다 — RegisterGenericConstruction<T> 가 IHasIdMessageSerializable<T> 미구현 타입을
+        // 참조해 CS0311 컴파일 불가 생성 코드가 된다.
+        var (diagnostics, generated, compileErrors) = RunGeneratorWithCompilation(Header + """
+            [Message(MessageKind.Standalone, 99999999)]
+            [GenericMessage(typeof(IdRangeBox<int>), ClassId = 1)]
+            public partial class IdRangeBox<T> { public T? Value { get; set; } }
+            """ + Footer);
+
+        Assert.Contains(diagnostics, d => d.Id == "MSGPROT005"); // 선언 위치 1차 진단
+        Assert.Contains(diagnostics, d => d.Id == "MSGPROT008"); // 캐리러 거부 2차 진단
+        Assert.DoesNotContain("RegisterGenericConstruction", generated); // CS0311 캐리러 방출 금지
+        Assert.Empty(compileErrors);
+    }
+
+    [Fact]
+    public void 구성_선언이_partial이_아니면_캐리러도_방출되지_않는다()
+    {
+        // KI-43 2차 회귀: MSGPROT001 로 거부될 선언의 캐리러도 방출되면 안 된다(005 트리거와 같은 결함류).
+        var (diagnostics, generated, compileErrors) = RunGeneratorWithCompilation(Header + """
+            [Message(MessageKind.Standalone, 5)]
+            [GenericMessage(typeof(NotPartialBox<int>), ClassId = 1)]
+            public class NotPartialBox<T> { public T? Value { get; set; } }
+            """ + Footer);
+
+        Assert.Contains(diagnostics, d => d.Id == "MSGPROT001");
+        Assert.Contains(diagnostics, d => d.Id == "MSGPROT008");
+        Assert.DoesNotContain("RegisterGenericConstruction", generated);
+        Assert.Empty(compileErrors);
+    }
+
+    [Fact]
+    public void MSGPROT002로_거부될_제네릭_선언과_같은_키여도_정상_구성은_거짓_양성을_받지_않는다()
+    {
+        // KI-43 2차 회귀(제네릭 002 갭): 중첩 non-partial 제네릭 선언은 생성·등록되지 않으므로 런타임 키
+        // 충돌 판정에서도 빠져야 한다. 세 count 되면 ① 같은 키의 정상 구성이 거짓 양성 MSGPROT015 로
+        // 캐리러를 잃고 ② 거부될 선언의 캐리러가 방출되어 CS0311 이 난다.
+        var (diagnostics, generated, compileErrors) = RunGeneratorWithCompilation(Header + """
+            public class GenericNestOuter
+            {
+                [Message(MessageKind.Standalone, 5)]
+                [GenericMessage(typeof(NestedBox<int>), ClassId = 1)]
+                public partial class NestedBox<T> { public T? Value { get; set; } }
+            }
+
+            [Message(MessageKind.Standalone, 5)]
+            [GenericMessage(typeof(TopBox<int>), ClassId = 1)]
+            public partial class TopBox<T> { public T? Value { get; set; } }
+            """ + Footer);
+
+        Assert.Contains(diagnostics, d => d.Id == "MSGPROT002");       // NestedBox 만 중첩 partial 위반
+        Assert.DoesNotContain(diagnostics, d => d.Id == "MSGPROT015"); // TopBox 구성 거짓 양성 금지
+        Assert.Contains("RegisterGenericConstruction<global::TestNs.TopBox<int>>(1)", generated);
+        Assert.DoesNotContain("RegisterGenericConstruction<global::TestNs.GenericNestOuter.NestedBox<int>>", generated);
+        Assert.Empty(compileErrors);
+    }
+
+    [Fact]
+    public void 크로스_어셈블리_구성_선언을_참조하는_순수_캐리러는_거짓_MSGPROT008을_받지_않는다()
+    {
+        // KI-43 2차 일원화 회귀(블로커): 캐리러 가드가 "소스 선언 한정" 조건 없이 제네릭 게이트 판정을 그대로
+        // 쓰면, 메타데이터 전용 선언(참조 어셈블리 PE — DeclaringSyntaxReferences 없음 → IsPartial=false)이
+        // "생성되지 않을 선언"으로 오판돼 프로토콜 DLL(선언+생성) + 게임 DLL(순수 캐리러) 표준 구성(KI-42)이
+        // MSGPROT008 으로 깨진다. 외부 선언은 원 컴파일의 게이트가 이미 검증했고, 크로스 어셈블리 중복은
+        // ADR-0005 의 런타임 감지 계약을 따른다 — 2컴파일레이션 재생(베이스 PE 방출)으로 고정한다.
+        var (diagnostics, generated, compileErrors, _) = RunGeneratorWithMetadataBase("""
+            using MessageProtocol;
+            namespace ProtocolShared
+            {
+                [Message(MessageKind.Standalone, 560)]
+                [GenericMessage(typeof(ProtoBox<int>), ClassId = 1)]
+                public partial class ProtoBox<T> { public T? Value { get; set; } }
+            }
+            """, Header + """
+            [GenericMessage(typeof(ProtocolShared.ProtoBox<int>), ClassId = 7)]
+            static class GameCarrier { }
+            """ + Footer);
+
+        Assert.DoesNotContain(diagnostics, d => d.Id.StartsWith("MSGPROT"));                                  // 거짓 008·015 부재
+        Assert.Contains("RegisterGenericConstruction<global::ProtocolShared.ProtoBox<int>>(7)", generated); // 순수 캐리러 방출
+        Assert.Empty(compileErrors);                                                                          // CS0311 부재(베이스 PE 가 구현 제공)
+    }
+
+    [Fact]
+    public void MSGPROT017_해시_0_Child는_충돌_판정에_들어가지_않는다()
+    {
+        // KI-43 2차 회귀(규약 고정·역방향 가드): "aacN86426"·"aafw42693"의 FNV-1a 24비트 == 0(오프라인 탐색).
+        // 둘 다 MSGPROT017 로 거부되는 타입 — 게이트가 이들을 세면 서로를 피어로 삼는 014/016 노이즈가 생긴다.
+        // Generate 가 017 지점에서 충돌 검사 앞에 반환하고 value-0 Child 조립 id 를 가진 유효 타입은 존재할 수
+        // 없어(수동 0 미표현·해시 0=거부) 이 테스트는 수정 전에도 통과한다 — 치아가 아니라 규약 고정이다.
+        var (diagnostics, generated, compileErrors) = RunGeneratorWithCompilation("""
+            using MessageProtocol;
+
+            [Message(MessageKind.Parent, 1)]
+            public partial class HashZeroRoot { public int X { get; set; } }
+
+            [Message]
+            public partial class aacN86426 : HashZeroRoot { public int Y { get; set; } }
+
+            [Message]
+            public partial class aafw42693 : HashZeroRoot { public int Z { get; set; } }
+            """);
+
+        var rejected = diagnostics.Where(d => d.Id == "MSGPROT017").ToArray();
+        Assert.Equal(2, rejected.Length);                              // 둘 다 해시 0 거부
+        Assert.DoesNotContain(diagnostics, d => d.Id == "MSGPROT014" || d.Id == "MSGPROT016");
+        Assert.DoesNotContain("partial class aacN86426", generated);
+        Assert.DoesNotContain("partial class aafw42693", generated);
+        Assert.Empty(compileErrors);
+    }
+
+    [Fact]
     public void MSGPROT015_다른_제네릭_선언이_같은_MessageId_ClassId를_쓰면_컴파일에서_거부된다()
     {
         // 감사 원장 MEDIUM(2026-09-06) 회귀: 서로 다른 두 제네릭 선언이 같은 MessageId 값 + 같은 ClassId 를 쓰면

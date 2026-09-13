@@ -153,7 +153,7 @@ namespace MessageProtocol.CodeGenerator
             // [Message] 해시가 Child 위치에서 0 을 조립하면 (확률 1/2^24) — 수동 id 와
             // 동일하게 0 은 금지다. 자동 재해시는 하지 않는다: 나중 메시지 추가로 기존 ID 가 바뀌는 와이어 파손을
             // 만들지 않게, 이름을 바꾸거나 명시적 ID 속성으로 전환하게 안내한다.
-            if (typeMeta.IsHashIdMessage && typeMeta.IsGroupElementMessage && typeMeta.GroupElementMessageId == 0)
+            if (typeMeta.IsHashZeroGroupElement)
             {
                 context.ReportDiagnostic(Diagnostic.Create(
                     DiagnosticDescriptors.GroupElementHashZero,
@@ -338,20 +338,7 @@ namespace MessageProtocol.CodeGenerator
             return typeSymbol.ContainAttribute(attributeReferences.MessageAttributeType);
         }
 
-        /// <summary>
-        /// 모듈 로드 시 `_registeredMessageIds` 에 **실제로 등록될** 와이어 MessageId 를 조립해 반환한다.
-        /// 등록되지 않는 형태는 false — NonId(임베디드 ID 없음), 제네릭 선언(런타임 키가 (MessageId, ClassId) 라
-        /// 구성 충돌 검사가 담당), partial 아님·기본 생성 불가(MSGPROT001·MSGPROT010 으로 생성 거부),
-        /// abstract 그룹 루트(상속 전용이라 생성 건너뜀). 이 게이트를 통과한 타입만 충돌 판정에 센다 —
-        /// 어차피 생성되지 않을 타입을 세면 거짓 양성이 난다.
-        /// </summary>
-        /// <summary>
-        /// 모듈 로드 시 구성 등록이 **실제로 조립할** 제네릭 와이어 MessageId. 등록되지 않는 선언은 false —
-        /// 제네릭이 아니거나 [Message] 선언이 아니거나, partial 아님·기본 생성 불가(MSGPROT001·MSGPROT010),
-        /// ID·카테고리 범위 위반(MSGPROT005·MSGPROT013), 메시지 속성 중복(MSGPROT007) 으로 이미 거부될 선언은
-        /// 생성·등록되지 않으므로 충돌 판정에서 뺀다 — 연쇄 오탐 방지 규약은 <see cref="GenericConstruction.TryGetRegisteredWireMessageId"/>
-        /// (KI-31) 와 같다.
-        /// </summary>
+        /// <summary>타입 자신의 선언부 중 하나라도 partial 한지. MSGPROT001 진단과 충돌 판정 게이트(KI-31·KI-43)가 쓴다.</summary>
         internal static bool IsPartial(INamedTypeSymbol typeSymbol)
         {
             return typeSymbol.DeclaringSyntaxReferences
@@ -360,7 +347,8 @@ namespace MessageProtocol.CodeGenerator
                     && declarationSyntax.Modifiers.Any(static modifier => modifier.IsKind(Microsoft.CodeAnalysis.CSharp.SyntaxKind.PartialKeyword)));
         }
 
-        static bool IsNestedContainingTypesPartial(INamedTypeSymbol typeSymbol)
+        /// <summary>중첩 선언의 모든 컨테이닝 타입이 partial 한지. MSGPROT002 진단과 충돌 판정 게이트가 같은 판정을 공유한다(KI-43).</summary>
+        internal static bool IsNestedContainingTypesPartial(INamedTypeSymbol typeSymbol)
         {
             var containingType = typeSymbol.ContainingType;
             while (containingType != null)
@@ -410,10 +398,9 @@ namespace MessageProtocol.CodeGenerator
             return sb.ToString();
         }
 
-        /// <summary>
-        /// 타입에 붙은 [GenericMessage(typeof(구성), ClassId)] 선언을 파싱한다. 잘못된 속성 인수는 Construction 이 null.
-        /// </summary>
-        static bool ValidateRootHierarchy(INamedTypeSymbol typeSymbol, TypeMetadata typeMeta, AttributeReferences attributeReferences)
+        /// <summary>요소 메시지는 상속 계층에 루트가, 루트 메시지의 조상은 루트가 아니어야 한다(MSGPROT003·004).
+        /// GenericConstruction 의 충돌 판정 게이트(KI-43)가 같은 판정을 재사용한다.</summary>
+        internal static bool ValidateRootHierarchy(INamedTypeSymbol typeSymbol, TypeMetadata typeMeta, AttributeReferences attributeReferences)
         {
             // 요소 메시지는 상속 계층에 루트가 있어야 한다.
             if (typeMeta.IsGroupElementMessage)

@@ -2,6 +2,23 @@
 
 문서 변경 기록. 최신이 위.
 
+## 2026-09-13 (4) (KI-43 3차 — 2차 일원화 회귀: 크로스 어셈블리 순수 캐리러 오탐)
+
+- **KI-43 3차 수정** (`GenericConstruction.cs`): 리뷰 라운드 2가 2-컴파일레이션 재생으로 확정한 2차 회귀 — 캐리러 방출 조건 일원화가 메타데이터 전용 선언(참조 어셈블리 PE, `DeclaringSyntaxReferences` 없음 → 게이트의 partial 판정 거짓 negative)을 "생성 거부될 선언"으로 오판해, 프로토콜 DLL(선언+생성) + 게임 DLL(순수 캐리러) 표준 구성(KI-42)이 거짓 MSGPROT008 으로 깨졌다. `ValidateConstructionEntries` 의 캐리러 가드를 이 컴파일 소스 선언 한정으로 적용 — 외부 선언은 원 컴파일 게이트가 검증, 크로스 어셈블리 중복은 ADR-0005 런타임 감지 계약 유지(게이트 자체 미수정). 015 피어 체크는 가드 결과를 재사용해 게이트 중복 호출 제거. 회귀 테스트 1개 추가(`RunGeneratorWithMetadataBase` 2-컴파일레이션: 베이스 PE 방출 + 소비자 순수 캐리러 → 진단 0·캐리러 방출·컴파일 오류 0. 이빨 확인: 가드를 2차 형태로 되돌리면 실패), 331→332×2 TFM.
+- `Known-Issues` KI-43 3차 기록, `Feature-Spec` MSGPROT008 사유 서술에 소스 선언 한정 계약 반영, `Commercial-Readiness-Review` 실측 기준선 갱신(332×2 TFM·Source 경고 0 정정 서술).
+
+## 2026-09-13 (3) (KI-43 2차 — 리뷰 라운드 발견 잔존 트리거)
+
+- **KI-43 2차 수정** (`GenericConstruction.cs`·`MessageCodeGenerator.cs`·`TypeMetadata.cs`): 리뷰 라운드에서 같은 결함류 잔존 3건 확인·수정. ① 게이트가 MSGPROT002(중첩 컨테이닝 non-partial)로 거부될 타입을 카운트 → 같은 ID 의 정상 타입 거짓 양성 014/015(`IsNestedContainingTypesPartial` internal 승격으로 Generate 와 판정 공유). ② 구성 캐리러 가드가 018 만 보아 001·002·005·010·013 으로 거부될 선언의 캐리러가 방출 → CS0311 — 방출 조건을 제네릭 게이트 판정으로 일원화(3곳 조각 복제 제거). ③ MSGPROT017(해시 0 Child) 게이트 제외(규약 완결 — `TypeMetadata.IsHashZeroGroupElement` 단일화). 회귀 테스트 5개 추가(이빨 확인: 2차 수정 되돌리면 4개 실패 × 양 TFM), 326→331×2 TFM.
+- `Commercial-Readiness-Review`: 1차 “유일한 실결함” 서술 정정, 테스트 331 반영, 운영 주의에 **어셈블리 간 와이어 ID 유일성**(014/015 게이트는 컴파일 단위 한정 — 프로토콜 DLL+게임 DLL 분리 시 조립 ID 충돌은 로드 시에만 발견, 해시 ID 1,000개 기준 생일 충돌 ~3%) 추가.
+- `Known-Issues` KI-43 항에 2차 수정 기록, `Feature-Spec` MSGPROT008 사유 목록 갱신(선언부 생성 거부 사유 전부 + 캐리러 방출 조건 일원화).
+
+## 2026-09-13 (2) (3.0.0 상용화 재검증 패스 — KI-43)
+
+- **KI-43 해결** (`Source/MessageProtocol.CodeGenerator/GenericConstruction.cs`·`MessageCodeGenerator.cs`): KI-31 “실제로 등록될 형태만 센다” 충돌 판정 게이트가 3.0.0 신규 거부 경로를 반영하지 않았다. 정의 밖 kind 값(MSGPROT018, decode 실패→Automatic 폴백)과 계층 위반(MSGPROT003/004) 선언이 카운트되어, 같은 조립 ID/런타임 키의 정상 타입이 거짓 양성 MSGPROT014/015 로 생성·캐리러를 잃었다. 게이트에 018 정합성 검사(비제네릭·제네릭 양쪽) + 계층 판정(심볼 전용 `ValidateRootHierarchy` 를 internal 승격해 Generate 와 판정 공유) 추가. 제네릭 변형 부수 결함: 018 불일치 선언의 구성 캐리러가 방출되어 CS0311 컴파일 불가 생성 코드 — `ValidateConstructionEntries` 가 해당 구성을 MSGPROT008 로 거부. 회귀 테스트 3개(이빨 확인: 수정 전 전부 실패), 테스트 323→326×2 TFM.
+- `Commercial-Readiness-Review` 를 3.0.0 기준으로 재검증 갱신: Release 빌드 경고 0·테스트 326×2 TFM·Sandbox 45/45, 3.0.0 델타 감사표(FNV-1a 결정성·kind 추론·와이어 ID 유일성·패키징 의존성 전파 독립 재실증·신뢰 경계 가드 유지·스레드 안전·GC), 운영 주의(동일 버전 재팩 시 전역 캐시 오염) 추가.
+- `Known-Issues` KI-43 등록, `Feature-Spec` MSGPROT008 사유 목록에 “선언부 018 불일치 구성” 추가.
+
 ## 2026-09-13 (MessageProtocol 단일 설치로 CodeGenerator 전파)
 
 - `Source/MessageProtocol/MessageProtocol.csproj`: CodeGenerator `ProjectReference`에서 `ReferenceOutputAssembly="false"` 제거 — NuGet pack 이 nuspec 의존성 `MessageProtocol.CodeGenerator` 를 생성, 이제 `MessageProtocol` 단일 설치로 Core·CodeGenerator 가 함께 설치된다. 기존 `analyzers/dotnet/cs` DLL 동봉 타깃(`IncludeCodeGeneratorAnalyzerInPackage`) 제거(동봉 → 의존성 전파로 전환, 이중 적용 방지).
