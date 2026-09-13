@@ -7,6 +7,10 @@ using Microsoft.CodeAnalysis.Text;
 using System.Collections.Immutable;
 using System.Text;
 
+// RS1024 억제(4.3 번들 분석기 한정 오탐): NamedTypeSymbolComparer 는 SymbolEqualityComparer.Default 에
+// 순수 위임하지만 구버전 분석기가 커스텀 comparer 를 인식 못한다. 4.14 번들 분석기는 무경고.
+#pragma warning disable RS1024
+
 namespace MessageProtocol.CodeGenerator
 {
     /// <summary>
