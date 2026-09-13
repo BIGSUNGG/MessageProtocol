@@ -2,6 +2,11 @@
 
 문서 변경 기록. 최신이 위.
 
+## 2026-09-14 (4) (Unity 6.0 LTS 생성기 재빌드 경로 확립)
+
+- `Source/Directory.Build.props` 에 `RoslynAnalyzerApiVersion`(기본 4.14.0) 신설, `MessageProtocol.CodeGenerator.csproj` 의 Microsoft.CodeAnalysis.CSharp 참조을 프로퍼티로 전환 — 기본 빌드/CI/nuget.org 게시 동작 불변. Unity 6.0 LTS(에디터 Roslyn 4.3)용은 `-p:RoslynAnalyzerApiVersion=4.3.0 -p:Version=3.1.0-unity` 오버라이드로 재빌드(DS_RPC 와 동일 패턴). CS9057 로 인해 4.14 참조 DLL 이 Unity 에서 조용히 스킵되는 문제 해결.
+- 로컬 피드 `unity-nuget/MessageProtocol.CodeGenerator.3.1.0-unity.nupkg` 를 현재 소스(3.1.0, KI-43 수정 포함) 기준 4.3.0 재빌드로 교체. 검증: DLL netstandard2.0·AssemblyRef Microsoft.CodeAnalysis(CSharp) 4.3.0.0(System.Reflection.Metadata). 기본 4.14 경로 단위 테스트 332×2 TFM 통과. [Packages](../03-Reference/Packages.md) 버전·빌드 구성에 절차 기록.
+
 ## 2026-09-14 (3) (하네스 전환 — UniNet PI 하네스 도입)
 
 - 기존 하네스 제거 — `.cursor/`(에이전트·훅·ds-document-vault 스킬), `.pi-glla/`, `.pi-subagents/` 삭제, 구 워크플로 기반 `AGENTS.md` 전면 교체. 결정 배경·내용: [ADR-0007](../05-Decisions/ADR-0007-harness-switch-to-pi.md)
