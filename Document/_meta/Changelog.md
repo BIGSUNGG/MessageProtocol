@@ -2,6 +2,12 @@
 
 문서 변경 기록. 최신이 위.
 
+## 2026-09-14 (3) (하네스 전환 — UniNet PI 하네스 도입)
+
+- 기존 하네스 제거 — `.cursor/`(에이전트·훅·ds-document-vault 스킬), `.pi-glla/`, `.pi-subagents/` 삭제, 구 워크플로 기반 `AGENTS.md` 전면 교체. 결정 배경·내용: [ADR-0007](../05-Decisions/ADR-0007-harness-switch-to-pi.md)
+- UniNet과 동일한 PI 하네스 구축 — `.pi/`(reviewer 에이전트, doc-guard 훅, doc-sync·review-until-clean·review-structure·review-security·review-performance 스킬)
+- 하네스 구성표 [HARNESS](../00-AI/HARNESS.md) 신설, doc-sync 스킬·AGENTS.md는 기존 Vault 구조(00-AI·_meta·05-Decisions)를 읽고 쓰도록 적응. `Known-Issues` 의 구 감사 원장(`.pi-glla`) 참조 문구 정리. 코드·테스트·기존 문서 구조 불변
+
 ## 2026-09-14 (2) (3.1.0 상용화 독립 재검증)
 
 - `Commercial-Readiness-Review` 에 3.1.0 재검증 섹션 추가 — HEAD 에서 빌드/테스트/Sandbox 실측 재현(332×2 TFM·Sandbox exit 0·Source 경고 0), 코어 런타임 5파일 직접 감사, 생성 코드 실방출물 검사. 결론(채용 가능)·제약 목록 변동 없음.
