@@ -2,6 +2,10 @@
 
 문서 변경 기록. 최신이 위.
 
+## 2026-09-14 (2) (3.1.0 상용화 독립 재검증)
+
+- `Commercial-Readiness-Review` 에 3.1.0 재검증 섹션 추가 — HEAD 에서 빌드/테스트/Sandbox 실측 재현(332×2 TFM·Sandbox exit 0·Source 경고 0), 코어 런타임 5파일 직접 감사, 생성 코드 실방출물 검사. 결론(채용 가능)·제약 목록 변동 없음.
+
 ## 2026-09-14 (패키지 3.1.0 릴리스)
 
 - `Source/Directory.Build.props` 버전 3.0.0 → 3.1.0. 배포는 태그 `v3.1.0` 로 GitHub Actions(nuget-publish)가 게시 — 파이프라인이 태그에서 버전을 추출해 pack·nuget push. 내용: KI-43 충돌 판정 게이트 완결(3차 수정·회귀 테스트 9개). 와이어·공개 API·의존성 무변경.

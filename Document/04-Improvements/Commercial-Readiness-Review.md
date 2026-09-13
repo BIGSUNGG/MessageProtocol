@@ -3,13 +3,17 @@ project: DS_MessageProtocol
 type: improve
 status: stable
 tags: [review, commercial-readiness, wire-compat]
-updated: 2026-09-13
+updated: 2026-09-14
 ---
 
-# 상용화 적합성 검토 (2026-09-08, v2.3.9 기준; 2026-09-09 개선 패스 반영; **2026-09-13 v3.0.0 재검증**)
+# 상용화 적합성 검토 (2026-09-08, v2.3.9 기준; 2026-09-09 개선 패스 반영; **2026-09-13 v3.0.0 재검증**; **2026-09-14 v3.1.0 재검증**)
 
 > "실제 유니티 서버 상용화 서비스의 라이브러리로 사용해도 문제 없는가"에 대한 검토 기록.
 > 빌드·테스트·퍼저·벤치마크 실측 + 와이어 호환성 실증 프로브(`artifacts/wire-probe/`) 기반.
+
+## 3.1.0 재검증 (2026-09-14 — 독립 재실측)
+
+HEAD(`62d1858`, 3.1.0)에서 문서 기록을 **코드·문서 읽기 + 실측으로 독립 재검증**했다. HEAD 는 검토된 3.0.0 상태에 버전 bump 만 추가한 것(`Source/` 델타 = KI-43 3차 수정 b75dc48, 이미 문서화됨)이라 결론 변동 없음. 실측: 클린 리빌드(`-t:Rebuild`) 오류 0·Source 경고 0(테스트 경고 8 = 기존 xUnit/nullable 세트), 테스트 **332/332 × 2 TFM 통과**, Sandbox 전체 PASS(exit 0), `NetStandardFixtures`(Unity 폴백 프로필) Release 빌드 오류 0. 코어 런타임 5파일(reader·writer·serializer 등록/캐시·contexts·PooledBuffer) 직접 감사 — 경계 검사(unsigned 랩어라운드 오버플로 안전)·엄격 UTF-8·decimal 비트 검증·깊이 가드 양방향·등록 클레임 선점/롤백/volatile 발행 전부 구현 확인. 생성 코드 실방출 검사(`EmitCompilerGeneratedFiles` 산출물) — 헤더 4바이트 검증(KI-5)·할당 전 컬렉션 가드(KI-13/17, `long 곱 × Remaining`)·null 규약·멤버 1회 스냅샷(KI-26) 확인. §1~5 제약(스키마 진화 미지원·KI-34 잔존·Unity Roslyn 버전·크로스 어셈블리 ID 유일성)은 그대로 유효.
 
 ## 결론
 
