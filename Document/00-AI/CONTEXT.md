@@ -34,7 +34,7 @@ updated: 2026-09-14
 6. `05-Decisions/` ADR ([ADR-0001](../05-Decisions/ADR-0001-Rewrite-Bootstrap.md))
 7. [CONVENTIONS](./CONVENTIONS.md)
 
-## 패키지 요약 (3.1.0)
+## 패키지 요약 (3.2.0)
 
 | NuGet 패키지 | 설명 |
 | -------------- | ------ |

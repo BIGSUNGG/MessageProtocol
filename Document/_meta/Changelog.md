@@ -2,6 +2,14 @@
 
 문서 변경 기록. 최신이 위.
 
+## 2026-09-14 (5) (3.2.0 — 생성기 Roslyn 4.3 기본화, Unity nuget.org 직접 소비)
+
+- **정책 전환**: `RoslynAnalyzerApiVersion` 기본값 4.14.0 → **4.3.0** — 생성기 패키지가 기본 빌드·CI·nuget.org 게시물부터 Unity 6.0 LTS(에디터 번들 Roslyn 4.3) 에서 CS9057 스킵 없이 로드된다. 구 Roslyn 참조는 상위 컴파일러(최신 SDK 4.14 포함)에서 하위호환 동작하므로 Unity·.NET 이 단일 패키지로 통일 — DS_RPC 식 `-unity` 접미사 이중 트랙 폐기(기존 3.1.0-unity 는 로컬 피드 낙구 폴백용).
+- RS1024 오탐(4.3 번들 구버전 분석기가 SymbolEqualityComparer 위임 커스텀 comparer 를 못 알아봄)은 프로젝트 전역 NoWarn 대신 발생 파일에 국소 `#pragma warning disable RS1024` 로 억제 — 향후 다른 코드의 진짜 위반은 계속 경고로 잡힌다.
+- 버전 3.1.0 → 3.2.0 (패밀리 범프, 저장소 관례). 생성기 기능 코드는 무변경(RS1024 pragma·주석만 추가) — 와이어·공개 API·런타임 무변경.
+- 검증: 단위 테스트 332×2 TFM 통과(4.3 컴파일 생성기), Sandbox 45 시나리오 통과, 3.2.0 nupkg 내부 DLL netstandard2.0·AssemblyRef Microsoft.CodeAnalysis(CSharp) 4.3.0.0(System.Reflection.Metadata), 기본 경로 경고 0(국소 pragma 억제).
+- `README` 갱신 — Version 2.3.9 낙구 정정, MessageProtocol 패키지 서술을 의존성 전파 방식으로 정정(동봉 방식은 2.x 유물), Unity 설치 안내에 3.2.0 Roslyn 4.3 호환 명시. `Packages`·`CONTEXT` 버전 동기화.
+
 ## 2026-09-14 (4) (Unity 6.0 LTS 생성기 재빌드 경로 확립)
 
 - `Source/Directory.Build.props` 에 `RoslynAnalyzerApiVersion`(기본 4.14.0) 신설, `MessageProtocol.CodeGenerator.csproj` 의 Microsoft.CodeAnalysis.CSharp 참조을 프로퍼티로 전환 — 기본 빌드/CI/nuget.org 게시 동작 불변. Unity 6.0 LTS(에디터 Roslyn 4.3)용은 `-p:RoslynAnalyzerApiVersion=4.3.0 -p:Version=3.1.0-unity` 오버라이드로 재빌드(DS_RPC 와 동일 패턴). CS9057 로 인해 4.14 참조 DLL 이 Unity 에서 조용히 스킵되는 문제 해결.

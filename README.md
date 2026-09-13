@@ -4,13 +4,13 @@ A source-generated binary message serialization library for .NET, built for game
 
 - **Targets:** `netstandard2.1` (Unity-compatible) and `net6.0+`
 - **Wire format:** compact binary headers (1–7 bytes) + little-endian payload, strict UTF-8 strings
-- **Version:** 2.3.9
+- **Version:** 3.2.0
 
 ## Packages
 
 | NuGet package | Description |
 | ------------- | ----------- |
-| **MessageProtocol** | Main package — the single entry point for applications. Contains the Core runtime DLL and ships the CodeGenerator as a Roslyn analyzer (`analyzers/dotnet/cs`). |
+| **MessageProtocol** | Main package — the single entry point for applications. Contains the Core runtime DLL and pulls in the CodeGenerator as a NuGet dependency (so generated code works with a single install). |
 | **MessageProtocol.Core** | Serialization runtime API only (`MessageSerializer`, message contracts). Use when you don't need generated code. |
 | **MessageProtocol.CodeGenerator** | Standalone Roslyn analyzer/source generator (netstandard2.0). For advanced or fine-grained reference scenarios. |
 
@@ -26,7 +26,7 @@ Core runtime only:
 dotnet add package MessageProtocol.Core
 ```
 
-**Unity:** the Unity Package Manager doesn't consume NuGet directly — copy the built DLLs (target `netstandard2.1`) from the packages into your project and reference them. See [Compatibility](#compatibility) for the Unity code-generation profile.
+**Unity:** the Unity Package Manager doesn't consume NuGet directly — restore the NuGet packages into your project (e.g. NuGetForUnity or a local folder feed) or copy the built DLLs (target `netstandard2.1`) and reference them. Since 3.2.0 the generator references Roslyn 4.3 — the version bundled with Unity 6 — so the standard packages work in Unity without special builds (3.1.0 and earlier shipped a newer Roslyn reference that Unity silently skips). See [Compatibility](#compatibility) for the Unity code-generation profile.
 
 ## Requirements
 
