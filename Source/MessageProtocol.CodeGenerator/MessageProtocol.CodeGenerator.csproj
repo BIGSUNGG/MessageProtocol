@@ -32,7 +32,7 @@ Analyzer-only package (netstandard2.0). For most apps, install the main MessageP
   </Target>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="$(RoslynAnalyzerApiVersion)" PrivateAssets="all" />
   </ItemGroup>
 
   <!-- 분석기 릴리스 추적(RS2008): AnalyzerReleases.Shipped.md · AnalyzerReleases.Unshipped.md 는
