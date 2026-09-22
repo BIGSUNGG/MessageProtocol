@@ -8,7 +8,7 @@ namespace MessageProtocol.Tests;
 public class RoundTripTests
 {
     [Fact]
-    public void 전체_멤버_타입이_왕복한다()
+    public void all_member_types_round_trip()
     {
         var msg = new AllTypesMessage
         {
@@ -25,6 +25,7 @@ public class RoundTripTests
             Double = -9.87654321,
             Decimal = 79228162514264337593543950335m,
             Char = '\u0007',
+            // intentional non-ASCII payload: exercises UTF-8 round-trip
             Text = "경계값",
             Level = Level.Low,
             Blob = new byte[] { 0, 1, 255 },
@@ -59,7 +60,7 @@ public class RoundTripTests
     }
 
     [Fact]
-    public void Standalone_와이어_레이아웃이_고정이다()
+    public void standalone_wire_layout_is_pinned()
     {
         byte[] bytes = MessageSerializer.Serialize(new FlatMessage { Value = 0x11223344 });
 
@@ -68,7 +69,7 @@ public class RoundTripTests
     }
 
     [Fact]
-    public void NonId_와이어_레이아웃이_고정이다()
+    public void nonid_wire_layout_is_pinned()
     {
         byte[] bytes = MessageSerializer.Serialize(new NoIdMessage { Flag = 7 });
         // header(NonId|cat0)=0x10, Flag=0x07, Note=null → int32(-1) LE
@@ -76,14 +77,14 @@ public class RoundTripTests
     }
 
     [Fact]
-    public void 카테고리_니블이_헤더에_반영된다()
+    public void category_nibble_is_reflected_in_the_header_byte()
     {
         byte[] bytes = MessageSerializer.Serialize(new AllTypesMessage());
         Assert.Equal(MessageWireFormat.ComposeHeaderByte(MessageFlag.Standalone, 5), bytes[0]);
     }
 
     [Fact]
-    public void MessageId_정적_속성이_조립_규칙과_일치한다()
+    public void messageid_static_properties_match_the_composition_rules()
     {
         Assert.Equal(MessageWireFormat.ComposeMessageId(MessageFlag.Standalone, 0, 100), FlatMessage.MessageId);
         Assert.Equal(MessageWireFormat.ComposeMessageId(MessageFlag.Standalone, 5, 101), AllTypesMessage.MessageId);
@@ -92,7 +93,7 @@ public class RoundTripTests
     }
 
     [Fact]
-    public void 구조체_메시지가_왕복한다()
+    public void struct_messages_round_trip()
     {
         var msg = new PointMessage { X = -3, Y = 9 };
         var rt = MessageSerializer.Deserialize<PointMessage>(MessageSerializer.Serialize(msg));
@@ -101,7 +102,7 @@ public class RoundTripTests
     }
 
     [Fact]
-    public void 레코드_메시지가_왕복한다()
+    public void record_messages_round_trip()
     {
         var msg = new SettingsRecord { Theme = "dark", Volume = 11 };
         var rt = MessageSerializer.Deserialize<SettingsRecord>(MessageSerializer.Serialize(msg));
@@ -110,13 +111,13 @@ public class RoundTripTests
     }
 
     [Fact]
-    public void 순환_참조와_공유_참조가_복원된다()
+    public void cyclic_and_shared_references_are_restored()
     {
         var a = new GraphMessage { Label = "a", Poco = new PlainPoco { Number = 1, Name = "p" } };
         var b = new GraphMessage { Label = "b" };
         a.Next = b;
-        b.Next = a;        // 순환
-        a.Other = b;       // 공유 (b가 두 번 등장)
+        b.Next = a;        // cycle
+        a.Other = b;       // shared (b appears twice)
 
         var rt = MessageSerializer.Deserialize<GraphMessage>(MessageSerializer.Serialize(a));
 
@@ -129,16 +130,16 @@ public class RoundTripTests
     }
 
     [Fact]
-    public void 상속_멤버가_함께_직렬화된다()
+    public void inherited_members_are_serialized_together()
     {
         var msg = new LoginEvent { Timestamp = 1234L, User = "kim" };
         var rt = MessageSerializer.Deserialize<LoginEvent>(MessageSerializer.Serialize(msg));
-        Assert.Equal(1234L, rt.Timestamp);   // 베이스 멤버
+        Assert.Equal(1234L, rt.Timestamp);   // base member
         Assert.Equal("kim", rt.User);
     }
 
     [Fact]
-    public void MessageIgnore는_제외하고_MessageInclude는_포함한다()
+    public void messageignore_excludes_and_messageinclude_includes()
     {
         var msg = new MemberControlMessage { Kept = 5, Excluded = 99 };
         msg.SetInternal(42);
@@ -151,7 +152,7 @@ public class RoundTripTests
     }
 
     [Fact]
-    public void 제네릭_경로는_Span과_Memory_입력을_지원한다()
+    public void generic_entry_supports_span_and_memory_inputs()
     {
         byte[] bytes = MessageSerializer.Serialize(new FlatMessage { Value = 9 });
 
@@ -161,7 +162,7 @@ public class RoundTripTests
     }
 
     [Fact]
-    public void 빈_데이터_역직렬화는_예외()
+    public void deserializing_empty_data_throws()
     {
         Assert.Throws<ArgumentException>(() => MessageSerializer.Deserialize<FlatMessage>(Array.Empty<byte>()));
         Assert.Throws<ArgumentException>(() => MessageSerializer.Deserialize(Array.Empty<byte>()));
@@ -169,17 +170,17 @@ public class RoundTripTests
     }
 
     [Fact]
-    public void Pooled_경로는_호환_경로와_동일_바이트를_만든다()
+    public void pooled_path_produces_bytes_identical_to_the_compatible_path()
     {
         var msg = new AllTypesMessage { Int32 = 3, Text = "pooled", Samples = new List<double> { 1.5 } };
         using var pooled = MessageSerializer.SerializePooled(msg);
         Assert.Equal(MessageSerializer.Serialize(msg), pooled.ToArray());
     }
 
-    // ---------- 제네릭 메시지 ----------
+    // ---------- generic messages ----------
 
     [Fact]
-    public void 제네릭_메시지가_왕복한다()
+    public void generic_messages_round_trip()
     {
         var msg = new GenericEnvelope<FlatMessage>
         {
@@ -200,7 +201,7 @@ public class RoundTripTests
     }
 
     [Fact]
-    public void 제네릭_NonId_메시지가_왕복한다()
+    public void generic_nonid_messages_round_trip()
     {
         var msg = new GenericPair<FlatMessage> { First = new FlatMessage { Value = 3 }, Tag = 9 };
         var rt = MessageSerializer.Deserialize<GenericPair<FlatMessage>>(MessageSerializer.Serialize(msg));
@@ -209,7 +210,7 @@ public class RoundTripTests
     }
 
     [Fact]
-    public void 제네릭_구성도_object_dispatch로_왕복한다()
+    public void generic_constructions_round_trip_via_object_dispatch()
     {
         var msg = new GenericEnvelope<FlatMessage> { Value = new FlatMessage { Value = 11 } };
         object? decoded = MessageSerializer.Deserialize(MessageSerializer.Serialize((object)msg));
@@ -218,21 +219,21 @@ public class RoundTripTests
     }
 
     [Fact]
-    public void 제네릭_헤더는_플래그0_MessageId_클래스ID_순서다()
+    public void generic_header_orders_flags0_messageid_then_classid()
     {
         var bytes = MessageSerializer.Serialize(new GenericEnvelope<FlatMessage> { Value = new FlatMessage { Value = 1 } });
 
         Assert.Equal(MessageWireFormat.ComposeHeaderByte(MessageFlag.Generic, 0), bytes[0]);
         Assert.Equal(0, bytes[1]);
         Assert.Equal(0, bytes[2]);
-        Assert.Equal(120, bytes[3]); // MessageId 24비트 (스탠드얼론 ID)
+        Assert.Equal(120, bytes[3]); // MessageId 24 bits (standalone id)
         Assert.Equal(0, bytes[4]);
         Assert.Equal(0, bytes[5]);
-        Assert.Equal(1, bytes[6]); // 구성 ClassId 24비트 (FlatMessage 구성 = 1)
+        Assert.Equal(1, bytes[6]); // construction ClassId 24 bits (FlatMessage construction = 1)
     }
 
     [Fact]
-    public void 같은_선언의_여러_구성이_함께_디스패치된다()
+    public void multiple_constructions_of_the_same_declaration_are_dispatched_together()
     {
         var a = new GenericEnvelope<FlatMessage> { Value = new FlatMessage { Value = 1 } };
         var b = new GenericEnvelope<SettingsRecord> { Value = new SettingsRecord { Theme = "dark", Volume = 3 } };
@@ -247,7 +248,7 @@ public class RoundTripTests
     }
 
     [Fact]
-    public void 다중_타입_매개변수_제네릭이_왕복한다()
+    public void multi_type_parameter_generics_round_trip()
     {
         var msg = new GenericDuo<FlatMessage, SettingsRecord>
         {
@@ -265,9 +266,9 @@ public class RoundTripTests
     }
 
     [Fact]
-    public void 분산_선언_구성이_선언부_구성과_공존하며_왕복한다()
+    public void carrier_declared_construction_coexists_with_declaration_construction_and_round_trips()
     {
-        // 캐리어 타입으로 선언한 구성 (ClassId 3)
+        // Construction declared on the carrier type (ClassId 3)
         var msg = new GenericEnvelope<PointMessage> { Value = new PointMessage { X = 3, Y = 4 } };
 
         var rt = MessageSerializer.Deserialize<GenericEnvelope<PointMessage>>(MessageSerializer.Serialize(msg));
@@ -277,14 +278,14 @@ public class RoundTripTests
         var rd = Assert.IsType<GenericEnvelope<PointMessage>>(decoded);
         Assert.Equal(4, rd.Value!.Y);
 
-        // 선언부 [GenericMessage] 구성 (ClassId 1) 도 그대로 동작
+        // The declaration-side [GenericMessage] construction (ClassId 1) also keeps working
         var decl = new GenericEnvelope<FlatMessage> { Value = new FlatMessage { Value = 9 } };
         var dd = Assert.IsType<GenericEnvelope<FlatMessage>>(MessageSerializer.Deserialize(MessageSerializer.Serialize((object)decl)));
         Assert.Equal(9, dd.Value!.Value);
     }
 
     [Fact]
-    public void 동일_제네릭_페이로드_두_구성이_한_메시지에서_왕복한다()
+    public void two_constructions_of_the_same_generic_payload_round_trip_in_one_message()
     {
         var msg = new DuplicateGenericPayloadsMessage
         {
@@ -301,26 +302,27 @@ public class RoundTripTests
     }
 
     [Fact]
-    public void 구성_선언_없는_제네릭_메시지는_직렬화_시_예외()
+    public void generic_message_without_a_construction_declaration_throws_on_serialization()
     {
         var msg = new UnregisteredGeneric<FlatMessage> { X = 1 };
         var ex = Assert.Throws<InvalidOperationException>(() => MessageSerializer.Serialize(msg));
-        Assert.Contains("GenericMessage", ex.Message); // 선언 방법 안내 포함
+        Assert.Contains("GenericMessage", ex.Message); // includes guidance on how to declare it
     }
 }
 
-// ---------- 생성 Deserialize 헤더 검증 (KI-5) ----------
+// ---------- generated Deserialize header verification (KI-5) ----------
 
 /// <summary>
-/// 생성 Deserialize(ref reader) 는 헤더를 건너뛰기만 해 다른 타입의 바이트를 먹이면 페이로드를
-/// 조용히 재해석했다(KI-5). 이제 프레임의 4바이트 MessageId(또는 NonId 1바이트 헤더)를 타입의
-/// 것과 비교해 불일치 시 안내 InvalidDataException 으로 거부한다. 분기는 프레임 바이트 기준이라
-/// NonId 플래그를 주장하는 위조 헤더도 1바이트 비교에서 잡힌다.
+/// The generated Deserialize(ref reader) used to skip the header only, so feeding it another type's bytes
+/// silently reinterpreted the payload (KI-5). It now compares the frame's 4-byte MessageId (or the NonId
+/// 1-byte header) against the type's own and rejects mismatches with an informative InvalidDataException.
+/// The branch is based on frame bytes, so even a forged header claiming the NonId flag is caught by the
+/// 1-byte comparison.
 /// </summary>
 public class WireHeaderValidationTests
 {
     [Fact]
-    public void 다른_타입의_바이트를_먹이면_헤더에서_거부된다()
+    public void bytes_of_a_different_type_are_rejected_at_the_header()
     {
         var wrongBytes = MessageSerializer.Serialize(new FlatMessage { Value = 7 });
 
@@ -332,25 +334,25 @@ public class WireHeaderValidationTests
     }
 
     [Fact]
-    public void 위조_NonId_헤더는_1바이트_비교에서_거부된다()
+    public void forged_nonid_header_is_rejected_by_the_one_byte_comparison()
     {
         var bytes = MessageSerializer.Serialize(new FlatMessage { Value = 7 });
-        bytes[0] = 0xFF; // NonId 플래그 주장 — 4바이트 읽기를 우회하려는 위조
+        bytes[0] = 0xFF; // claims the NonId flag — a forgery attempting to bypass the 4-byte read
 
         Assert.Throws<System.IO.InvalidDataException>(() => MessageSerializer.Deserialize<FlatMessage>(bytes));
     }
 
     [Fact]
-    public void MessageId_마지막_바이트_변조도_거부된다()
+    public void tampering_with_the_last_messageid_byte_is_also_rejected()
     {
         var bytes = MessageSerializer.Serialize(new FlatMessage { Value = 7 });
-        bytes[3] ^= 0x01; // id 하위 비트 변조 — 우연히 같은 타입으로 복호되는 일 차단
+        bytes[3] ^= 0x01; // flips low id bits — blocks decoding to the same type by coincidence
 
         Assert.Throws<System.IO.InvalidDataException>(() => MessageSerializer.Deserialize<FlatMessage>(bytes));
     }
 
     [Fact]
-    public void 정상_프레임은_검증_통과후_그대로_왕복된다()
+    public void legitimate_frames_round_trip_unchanged_after_verification_passes()
     {
         var message = new FlatMessage { Value = 12345 };
         var back = MessageSerializer.Deserialize<FlatMessage>(MessageSerializer.Serialize(message));

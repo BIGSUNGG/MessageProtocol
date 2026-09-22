@@ -5,16 +5,16 @@ using Xunit;
 namespace MessageProtocol.Tests;
 
 /// <summary>
-/// KI-14 회귀: 중첩 객체 역직렬화 재귀에 깊이 상한이 없었다. 불신 피어가 자기참조 메시지의
-/// <c>ReferenceKind.NewObject</c> 바이트만 늘어놓은 작은 프레임(실험 검증: 20,005바이트)을 보내면
-/// 스택 오버플로로 프로세스가 즉시 죽었다(catch 불가 — 5,005바이트는 생존, 20,005바이트는 사망).
-/// 이제 reader 가 중첩 깊이를 세고 생성 코드·<see cref="MessageSerializer.DeserializeFromReader"/> 가
-/// 재귀 지점에서 Enter/Leave 를 호출해 상한 초과를 <see cref="InvalidDataException"/> 으로 거부한다.
+/// KI-14 regression: nested-object deserialization recursion had no depth limit. A hostile peer could send a small frame of
+/// nothing but <c>ReferenceKind.NewObject</c> bytes for a self-referencing message (verified by experiment: 20,005 bytes) and
+/// kill the process instantly with a stack overflow (uncatchable — 5,005 bytes survived, 20,005 bytes died).
+/// The reader now counts nesting depth, and generated code plus <see cref="MessageSerializer.DeserializeFromReader"/> call
+/// Enter/Leave at recursion points, rejecting over-limit input with <see cref="InvalidDataException"/>.
 /// </summary>
 public class NestingDepthTests
 {
     [Fact]
-    public void 기본_상한을_넘는_중첩은_스택오버플로_대신_InvalidDataException으로_거부된다()
+    public void nesting_beyond_the_default_limit_is_rejected_with_invaliddataexception_instead_of_stack_overflow()
     {
         byte[] payload = BuildChainPayload(MessageBufferReader.DefaultMaxNestingDepth + 1);
 
@@ -25,7 +25,7 @@ public class NestingDepthTests
     }
 
     [Fact]
-    public void object_dispatch_경로도_같은_상한을_적용한다()
+    public void object_dispatch_path_applies_the_same_limit()
     {
         byte[] payload = BuildChainPayload(MessageBufferReader.DefaultMaxNestingDepth + 1);
 
@@ -33,7 +33,7 @@ public class NestingDepthTests
     }
 
     [Fact]
-    public void 기본_상한_딱만큼의_중첩은_정상_복호된다()
+    public void nesting_exactly_at_the_default_limit_decodes_normally()
     {
         int depth = MessageBufferReader.DefaultMaxNestingDepth;
         byte[] payload = BuildChainPayload(depth);
@@ -44,7 +44,7 @@ public class NestingDepthTests
     }
 
     [Fact]
-    public void reader_생성자로_상한을_올리면_더_깊은_그래프를_허용한다()
+    public void raising_the_limit_via_the_reader_constructor_allows_deeper_graphs()
     {
         int depth = 200;
         byte[] payload = BuildChainPayload(depth);
@@ -53,12 +53,12 @@ public class NestingDepthTests
         var roundTrip = MessageSerializer.Deserialize<ChainMessage>(ref reader);
 
         Assert.Equal(depth, CountChain(roundTrip));
-        // 재귀가 되돌아 나오며 카운터가 짝 맞게 감소한다.
+        // The counter decrements in matching pairs as the recursion unwinds.
         Assert.Equal(0, reader.NestingDepth);
     }
 
     [Fact]
-    public void 깊지_않고_넓은_그래프는_상한에_걸리지_않는다()
+    public void shallow_but_wide_graphs_do_not_hit_the_limit()
     {
         var message = new WideChainMessage
         {
@@ -71,12 +71,12 @@ public class NestingDepthTests
     }
 
     [Fact]
-    public void 기존_자기참조_그래프_왕복은_가드_도입_후에도_동작한다()
+    public void existing_self_referencing_graph_round_trips_still_work_after_the_guard()
     {
         var a = new GraphMessage { Label = "a" };
         var b = new GraphMessage { Label = "b" };
         a.Next = b;
-        b.Next = a;   // 순환 — 백레퍼런스로 복원
+        b.Next = a;   // cycle — restored via a back-reference
         a.Other = b;
 
         var roundTrip = MessageSerializer.Deserialize<GraphMessage>(MessageSerializer.Serialize(a));
@@ -87,7 +87,7 @@ public class NestingDepthTests
     }
 
     [Fact]
-    public void Enter는_상한에서_거부되고_Leave는_0_아래로_내려가지_않는다()
+    public void enter_is_rejected_at_the_limit_and_leave_never_goes_below_zero()
     {
         var reader = new MessageBufferReader(new byte[8], 2);
 
@@ -95,7 +95,7 @@ public class NestingDepthTests
         reader.EnterNestedObject();
         Assert.Equal(2, reader.NestingDepth);
 
-        // ref struct 로컬은 람다에 포획할 수 없어 try/catch 로 직접 검증한다.
+        // ref struct locals cannot be captured in lambdas, so this verifies directly via try/catch.
         Exception? thrown = null;
         try
         {
@@ -107,11 +107,11 @@ public class NestingDepthTests
         }
 
         Assert.IsType<InvalidDataException>(thrown);
-        Assert.Equal(2, reader.NestingDepth);   // 거부된 Enter 는 깊이를 올리지 않는다
+        Assert.Equal(2, reader.NestingDepth);   // a rejected Enter does not raise the depth
 
         reader.LeaveNestedObject();
         reader.LeaveNestedObject();
-        reader.LeaveNestedObject();             // 짝이 맞지 않는 호출 — 음수 깊이가 가드를 무력화하면 안 된다
+        reader.LeaveNestedObject();             // unpaired call — a negative depth must not disarm the guard
         Assert.Equal(0, reader.NestingDepth);
     }
 
@@ -119,23 +119,23 @@ public class NestingDepthTests
     [InlineData(0)]
     [InlineData(-1)]
     [InlineData(int.MinValue)]
-    public void 상한이_0_이하면_reader_생성에서_거부된다(int maxNestingDepth)
+    public void non_positive_limit_is_rejected_at_reader_construction(int maxNestingDepth)
     {
         Assert.Throws<ArgumentOutOfRangeException>(
             () => new MessageBufferReader(new byte[4], maxNestingDepth));
     }
 
-    // ---------- 쓰기 경로 (KI-25) ----------
+    // ---------- Write path (KI-25) ----------
 
     [Fact]
-    public void writer와_reader_기본_상한은_의도적으로_동일하다()
+    public void writer_and_reader_default_limits_are_intentionally_identical()
     {
-        // 비대칭이면 송신 측이 성공적으로 쓴 프레임을 수신 측이 기본 설정으로 읽지 못한다.
+        // With an asymmetry, a frame the sender wrote successfully could not be read by the receiver at default settings.
         Assert.Equal(MessageBufferReader.DefaultMaxNestingDepth, MessageBufferWriter.DefaultMaxNestingDepth);
     }
 
     [Fact]
-    public void 깊은_체인_직렬화는_스택오버플로_대신_InvalidOperationException으로_거부된다()
+    public void deep_chain_serialization_is_rejected_with_invalidoperationexception_instead_of_stack_overflow()
     {
         ChainMessage head = BuildChain(MessageBufferReader.DefaultMaxNestingDepth + 1);
 
@@ -145,12 +145,12 @@ public class NestingDepthTests
     }
 
     [Fact]
-    public void 디스패치_멤버_순환_그래프는_백레퍼런스로_유한하게_기록된다()
+    public void dispatch_member_cyclic_graph_is_written_finitely_via_back_references()
     {
-        // KI-9 해소 이전에는 디스패치 멤버가 백레퍼런스를 추적하지 않아 이 순환이 쓰기 재귀를 무한히 깊게
-        // 만들었고(프로세스 사망), KI-25 깊이 가드가 InvalidOperationException 으로 바꿔줄 뿐이었다.
-        // 이제 호출측 SerializeContext 의 오브젝트 id 추적이 디스패치 쓰기로 전파되어 순환 두 번째
-        // 방문부터 백레퍼런스로 종결된다 — 예외 대신 유한한 와이어로 참조 동일성이 복원된다.
+        // Before the KI-9 resolution, dispatch members did not track back-references, so this cycle made write recursion infinitely
+        // deep (process death); the KI-25 depth guard only converted that into InvalidOperationException.
+        // The caller-side SerializeContext's object-id tracking now propagates into dispatch writes, terminating the cycle's second
+        // visit with a back-reference — reference identity is restored with finite wire instead of an exception.
         var envelope = new CommandEnvelope();
         envelope.Command = new WrapCommand { Seq = 1, Inner = envelope };
 
@@ -159,18 +159,18 @@ public class NestingDepthTests
 
         var wrap = Assert.IsType<WrapCommand>(back.Command);
         Assert.Equal(1L, wrap.Seq);
-        // 두 경로(루트에서 직접·Inner.Command 로 한 바퀴 돌아)로 도달한 wrap 인스턴스는 동일하다.
+        // The wrap instance reached via both paths (directly from the root, and around through Inner.Command) is identical.
         Assert.Same(wrap, Assert.IsType<WrapCommand>(wrap.Inner!.Command));
-        // 순환이므로 되직렬화해도 동일한 형태다(유한·안정).
+        // Being a cycle, deserializing again yields the same shape (finite and stable).
         var again = MessageSerializer.Deserialize<CommandEnvelope>(MessageSerializer.Serialize(back));
         Assert.IsType<WrapCommand>(again!.Command);
     }
 
     [Fact]
-    public void 깊은_디스패치_체인은_스택오버플로_대신_InvalidOperationException으로_거부된다()
+    public void deep_dispatch_chain_is_rejected_with_invalidoperationexception_instead_of_stack_overflow()
     {
-        // KI-25 가드는 유효: 백레퍼런스 종결은 "이미 등록된 인스턴스 재방문"에만 작동하므로,
-        // 매 수준이 새 인스턴스인 깊은 디스패치 체인(공유 없음)은 여전히 깊이 상한으로 거부된다.
+        // The KI-25 guard remains valid: back-reference termination only works for "revisiting an already-registered instance",
+        // so a deep dispatch chain where every level is a new instance (no sharing) is still rejected by the depth limit.
         var head = BuildDispatchChain(MessageBufferReader.DefaultMaxNestingDepth + 1);
 
         var exception = Assert.Throws<InvalidOperationException>(() => MessageSerializer.Serialize(head));
@@ -180,7 +180,7 @@ public class NestingDepthTests
 
     static CommandEnvelope BuildDispatchChain(int depth)
     {
-        // envelope → wrap(디스패치) → envelope → … 수준마다 새 인스턴스 — 공유·순환이 없는 깊은 체인.
+        // envelope → wrap (dispatch) → envelope → … a new instance per level — a deep chain with no sharing or cycles.
         var tail = new CommandEnvelope();
         for (int i = 0; i < depth; i++)
         {
@@ -190,7 +190,7 @@ public class NestingDepthTests
     }
 
     [Fact]
-    public void writer_상한을_올리면_깊은_체인을_쓰고_맞춘_reader_상한으로_되읽는다()
+    public void raising_the_writer_limit_writes_deep_chains_and_rereads_with_a_matching_reader_limit()
     {
         int links = 200;
         ChainMessage head = BuildChain(links);
@@ -201,7 +201,7 @@ public class NestingDepthTests
         {
             MessageSerializer.Serialize(head, ref writer);
             bytes = writer.ToArray();
-            Assert.Equal(0, writer.NestingDepth);   // 재귀가 되돌아 나오며 짝 맞게 감소
+            Assert.Equal(0, writer.NestingDepth);   // decrements in matching pairs as the recursion unwinds
         }
         finally
         {
@@ -215,7 +215,7 @@ public class NestingDepthTests
     }
 
     [Fact]
-    public void 깊지_않고_넓은_그래프_직렬화는_쓰기_상한에_걸리지_않는다()
+    public void shallow_but_wide_graph_serialization_does_not_hit_the_write_limit()
     {
         var message = new WideChainMessage
         {
@@ -228,7 +228,7 @@ public class NestingDepthTests
     }
 
     [Fact]
-    public void writer_Enter는_상한에서_거부되고_Leave는_0_아래로_내려가지_않는다()
+    public void writer_enter_is_rejected_at_the_limit_and_leave_never_goes_below_zero()
     {
         var writer = MessageBufferWriter.Create(8, 2);
 
@@ -236,7 +236,7 @@ public class NestingDepthTests
         writer.EnterNestedObject();
         Assert.Equal(2, writer.NestingDepth);
 
-        // ref struct 로컬은 람다에 포획할 수 없어 try/catch 로 직접 검증한다.
+        // ref struct locals cannot be captured in lambdas, so this verifies directly via try/catch.
         Exception? thrown = null;
         try
         {
@@ -248,11 +248,11 @@ public class NestingDepthTests
         }
 
         Assert.IsType<InvalidOperationException>(thrown);
-        Assert.Equal(2, writer.NestingDepth);   // 거부된 Enter 는 깊이를 올리지 않는다
+        Assert.Equal(2, writer.NestingDepth);   // a rejected Enter does not raise the depth
 
         writer.LeaveNestedObject();
         writer.LeaveNestedObject();
-        writer.LeaveNestedObject();             // 짝이 맞지 않는 호출 — 음수 깊이가 가드를 무력화하면 안 된다
+        writer.LeaveNestedObject();             // unpaired call — a negative depth must not disarm the guard
         Assert.Equal(0, writer.NestingDepth);
         writer.Dispose();
     }
@@ -261,13 +261,13 @@ public class NestingDepthTests
     [InlineData(0)]
     [InlineData(-1)]
     [InlineData(int.MinValue)]
-    public void 상한이_0_이하면_writer_생성에서_거부된다(int maxNestingDepth)
+    public void non_positive_limit_is_rejected_at_writer_construction(int maxNestingDepth)
     {
         Assert.Throws<ArgumentOutOfRangeException>(
             () => MessageBufferWriter.Create(16, maxNestingDepth));
     }
 
-    /// <summary>links 개만큼 자기참조가 이어진 체인을 만든다(노드 수는 links + 1). 재귀 없이 반복으로 조립한다.</summary>
+    /// <summary>Builds a chain of self-references links long (node count is links + 1). Assembled iteratively, without recursion.</summary>
     static ChainMessage BuildChain(int links)
     {
         var head = new ChainMessage();
@@ -282,9 +282,9 @@ public class NestingDepthTests
     }
 
     /// <summary>
-    /// 적대 프레임을 바이트로 직접 조립한다 — 객체 그래프를 만들어 직렬화하면 쓰기 측이 먼저
-    /// 같은 깊이만큼 재귀하므로, 수신 경로만 검증하려면 와이어 바이트가 필요하다.
-    /// 헤더 4바이트 + 수준당 NewObject 1바이트 + 종단 Null 1바이트.
+    /// Assembles the hostile frame directly as bytes — building an object graph and serializing it would make the write side
+    /// recurse just as deep first, so verifying only the receive path requires raw wire bytes.
+    /// 4-byte header + 1 NewObject byte per level + 1 terminating Null byte.
     /// </summary>
     static byte[] BuildChainPayload(int depth)
     {
@@ -302,7 +302,7 @@ public class NestingDepthTests
         return payload;
     }
 
-    /// <summary>복호된 체인 길이. 재귀가 아니라 반복으로 세어 검증 자체가 스택을 쓰지 않는다.</summary>
+    /// <summary>Decoded chain length. Counted iteratively rather than recursively, so the verification itself uses no stack.</summary>
     static int CountChain(ChainMessage? head)
     {
         int count = 0;

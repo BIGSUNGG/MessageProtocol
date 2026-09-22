@@ -5,42 +5,43 @@ using Xunit;
 namespace MessageProtocol.Tests;
 
 /// <summary>
-/// KI-11 회귀: <see cref="MessageSerializer"/> 의 타입별 정적 캐시(`SerializerCache{T}`)가 등록 시점 문제로
-/// **영구히** 망가지던 두 형태를 막는다.
-/// ① 캐시 cctor 가 리플렉션 실패 시 예외를 던지면 CLR 이 그 실패를 타입별로 영구 캐싱해서, 이후 델리게이트 등록이
-/// 성공해도 해당 타입은 영원히 `TypeInitializationException` 이었다. ② cctor 필드가 readonly 라 등록 전 조기 접근으로
-/// cctor 가 먼저 돌면 Prefill 이 영원히 무시됐다. 이제 cctor 는 던지지 않고(미해결은 null), 등록은 캐시를 직접 채워 복구한다.
+/// KI-11 regression: blocks the two ways <see cref="MessageSerializer"/>'s per-type static cache (`SerializerCache{T}`)
+/// could become **permanently** broken by a registration-time problem.
+/// ① If the cache cctor threw on reflection failure, the CLR cached that failure per type — even after delegate registration
+/// later succeeded, the type kept failing with `TypeInitializationException` forever. ② The cctor fields were readonly, so if
+/// early access ran the cctor before registration, Prefill was ignored forever. The cctor now never throws (unresolved = null),
+/// and registration repairs the cache by filling it directly.
 /// </summary>
 public class SerializerCacheTests
 {
     [Fact]
-    public void 계약_멤버_없는_타입의_조기_접근은_영구_초기화_실패가_아니라_명확한_예외를_던진다()
+    public void early_access_to_a_type_without_contract_members_throws_a_clear_exception_not_a_permanent_initialization_failure()
     {
-        // 수정 전: cctor 가 던지고 CLR 이 캐싱 → TypeInitializationException(그 타입은 이후로도 영구 실패).
+        // Before the fix: the cctor threw and the CLR cached it → TypeInitializationException (that type failed forever after).
         var exception = Assert.Throws<InvalidOperationException>(
             () => MessageSerializer.Serialize(new UnregisteredContractMessage { Value = 1 }));
 
         Assert.Contains(nameof(UnregisteredContractMessage), exception.Message);
         Assert.Contains("Serialize", exception.Message);
 
-        // 같은 타입을 다시 건드려도 초기화 실패가 아니라 같은 안내 예외가 나온다 = 상태가 오염되지 않았다.
+        // Touching the same type again yields the same guidance exception, not an initialization failure = no state corruption.
         Assert.Throws<InvalidOperationException>(
             () => MessageSerializer.Serialize(new UnregisteredContractMessage { Value = 2 }));
     }
 
     [Fact]
-    public void 조기_접근으로_cctor가_먼저_돌아도_이후_델리게이트_등록으로_복구된다()
+    public void early_access_running_the_cctor_first_still_recovers_via_later_delegate_registration()
     {
-        // 1) 등록 전 조기 접근 — 캐시 cctor 가 리플렉션 경로로 돌아 아무것도 채우지 못한다.
+        // 1) Early access before registration — the cache cctor takes the reflection path and fills nothing.
         Assert.Throws<InvalidOperationException>(
             () => MessageSerializer.Serialize(new LateBoundMessage { Value = 1 }));
 
-        // 2) 그 뒤 델리게이트 등록. 수정 전에는 여기서도 영구 실패(cctor 재실행 불가 + readonly 필드)였다.
+        // 2) Then delegate registration. Before the fix this also failed forever (cctor cannot re-run + readonly fields).
         MessageSerializer.RegisterNonIdMessage<LateBoundMessage>(
             static (LateBoundMessage message, ref MessageBufferWriter writer) => writer.WriteInt32(message.Value),
             static (ref MessageBufferReader reader) => new LateBoundMessage { Value = reader.ReadInt32() });
 
-        // 3) 제네릭 hot path 와 object dispatch 경로 모두 실제로 동작해야 한다.
+        // 3) Both the generic hot path and the object dispatch path must actually work.
         var roundTrip = MessageSerializer.Deserialize<LateBoundMessage>(
             MessageSerializer.Serialize(new LateBoundMessage { Value = 7 }));
         Assert.Equal(7, roundTrip.Value);
@@ -51,7 +52,7 @@ public class SerializerCacheTests
     }
 
     [Fact]
-    public void 계약_멤버_없는_타입의_리플렉션_등록은_나중_null_델리게이트가_아니라_등록_시점에_알린다()
+    public void reflection_registration_of_a_type_without_contract_members_fails_at_registration_time_not_with_a_later_null_delegate()
     {
         var exception = Assert.Throws<InvalidOperationException>(
             () => MessageSerializer.RegisterNonIdMessage<UnregisteredContractMessage>());
@@ -60,9 +61,9 @@ public class SerializerCacheTests
     }
 
     [Fact]
-    public void 수동_구현_타입의_리플렉션_등록은_그대로_동작한다()
+    public void reflection_registration_of_manually_implemented_types_still_works()
     {
-        // 역방향 가드: cctor 를 비던짐으로 바꾼 변화가 정상 리플렉션 경로를 약화시키면 안 된다.
+        // Reverse guard: making the cctor non-throwing must not weaken the normal reflection path.
         byte[] bytes = MessageSerializer.Serialize(new ManualStandalone { Value = 42 });
 
         var roundTrip = MessageSerializer.Deserialize<ManualStandalone>(bytes);
@@ -70,22 +71,22 @@ public class SerializerCacheTests
         Assert.Equal(42, roundTrip.Value);
     }
 
-    // ---------- KI-11 잔존: 거부된 등록의 캐시 잔류 (2026-09-07 해소) ----------
+    // ---------- KI-11 residue: cache leftovers from rejected registrations (resolved 2026-09-07) ----------
 
     [Fact]
-    public void 거부된_HasId_등록은_SerializerCache에_충돌_MessageId를_남기지_않는다()
+    public void rejected_hasid_registration_leaves_no_colliding_message_id_in_the_serializer_cache()
     {
-        // 수정 전: prefill 이 등록 검증보다 먼저 돌아, 거부된 등록의 MessageId/HasId 가 캐시에 영구 잔류했고
-        // 이후 올바른 id 로 재등록해도 복구 블록(Serialize is null)을 건너뛰어 잘못된 MessageId 가 남았다
-        // (RegisterGenericConstruction 이 캐시의 MessageId 로 런타임 키를 조립하므로 오염은 키 충돌로 번진다).
+        // Before the fix: prefill ran before registration validation, so a rejected registration's MessageId/HasId stayed in the cache
+        // permanently; re-registering with the correct id later skipped the repair block (Serialize is null), leaving the wrong MessageId
+        // (RegisterGenericConstruction assembles runtime keys from the cache's MessageId, so the corruption escalated into key collisions).
         Assert.Throws<InvalidOperationException>(() =>
             MessageSerializer.RegisterHasIdMessage<ManualIdMessage>(
-                ManualIdMessage.Serialize, ManualIdMessage.Deserialize, FlatMessage.MessageId)); // 이미 점유된 id
+                ManualIdMessage.Serialize, ManualIdMessage.Deserialize, FlatMessage.MessageId)); // an already-occupied id
 
-        // 거부로 캐시가 오염되지 않았다 — 이 접근이 cctor 를 돌려도 자기 자신의 MessageId 로만 채워진다.
+        // The rejection did not corrupt the cache — this access may run the cctor, but it fills only the type's own MessageId.
         Assert.Equal(ManualIdMessage.MessageId, MessageSerializer.SerializerCache<ManualIdMessage>.MessageId);
 
-        // 올바른 id 로 재등록하면 성공하고 object dispatch 왕복도 동작한다.
+        // Re-registering with the correct id succeeds, and the object dispatch round trip works.
         MessageSerializer.RegisterHasIdMessage<ManualIdMessage>(
             ManualIdMessage.Serialize, ManualIdMessage.Deserialize, ManualIdMessage.MessageId);
         Assert.Equal(ManualIdMessage.MessageId, MessageSerializer.SerializerCache<ManualIdMessage>.MessageId);
@@ -96,10 +97,10 @@ public class SerializerCacheTests
     }
 
     [Fact]
-    public void NonId_비트가_박힌_HasId_등록은_조용한_반쪽_등록이_아니라_등록_시점에_거부된다()
+    public void hasid_registration_with_the_nonid_bit_set_is_rejected_at_registration_time_not_silently_half_registered()
     {
-        // 수정 전: RegisterCore 가 MessageId·reader 등록을 조용히 건너뛰어 object 직렬화만 동작하고
-        // 이후 Deserialize(object) 가 원인을 알려주지 않는 KeyNotFoundException 으로 실패했다 (감사 원장 LOW).
+        // Before the fix: RegisterCore silently skipped the MessageId·reader registration, leaving only object serialization working,
+        // and a later Deserialize(object) failed with a KeyNotFoundException that gave no cause (audit ledger LOW).
         uint nonIdFlagged = MessageProtocol.MessageWireFormat.ComposeMessageId(
             MessageProtocol.MessageFlag.NonIdMessage, 0, 777);
 
@@ -111,14 +112,14 @@ public class SerializerCacheTests
         Assert.Contains(nameof(MessageSerializer.RegisterNonIdMessage), exception.Message);
     }
 
-    // ---------- RegisterGenericConstruction 발행 순서 (2026-09-07 해소) ----------
+    // ---------- RegisterGenericConstruction publish order (resolved 2026-09-07) ----------
 
     [Fact]
-    public void RegisterGenericConstruction은_classId를_writer보다_먼저_발행한다()
+    public void registergenericconstruction_publishes_classid_before_writer()
     {
-        // 감사 원장 MEDIUM: 수정 전 순서(writer → reader → classId)에서는 writer 디스패치가 보인 뒤 classId
-        // 기록 전에 object dispatch 로 진입한 Serialize 가 GetGenericClassId=0 을 읽고 안내 없는
-        // "not registered" 예외를 냈다. 샘플러가 writer 를 보는 순간 classId 도 보여야 한다.
+        // Audit ledger MEDIUM: with the old order (writer → reader → classId), a Serialize entering via object dispatch after the writer
+        // dispatch became visible but before the classId write read GetGenericClassId=0 and threw an unexplained
+        // "not registered" exception. The moment a sampler can see the writer, it must also see the classId.
         var violations = new System.Collections.Concurrent.ConcurrentQueue<Exception>();
         var stop = new ManualResetEventSlim(false);
         var envelope = new GenericEnvelope<ChainMessage> { Value = new ChainMessage() };
@@ -134,8 +135,8 @@ public class SerializerCacheTests
                 }
                 catch (Exception ex)
                 {
-                    // 발행 전 정상 실패(미등록·generic-flag 안내)와 달리 classId=0 경쟁은 생성 코드의
-                    // 전용 메시지로만 나타난다 — 이것이 관찰되면 발행 순서 위반이다.
+                    // Unlike the normal pre-publish failure (unregistered · generic-flag guidance), the classId=0 race appears
+                    // only as the generated code's dedicated message — observing it means a publish-order violation.
                     if (ex.Message.Contains("This generic construction is not registered for serialization"))
                     {
                         violations.Enqueue(ex);
@@ -146,7 +147,7 @@ public class SerializerCacheTests
 
         foreach (var sampler in samplers) sampler.Start();
         MessageSerializer.RegisterGenericConstruction<GenericEnvelope<ChainMessage>>(9);
-        Thread.SpinWait(500_000);   // 등록 완료 후에도 압박 유지 — 완료 상태에서 위반이 나면 안 된다.
+        Thread.SpinWait(500_000);   // keep up the pressure after registration completes — no violation may appear in the completed state
         stop.Set();
         foreach (var sampler in samplers) sampler.Join();
 
@@ -158,33 +159,33 @@ public class SerializerCacheTests
     }
 
     [Fact]
-    public void RegisterGenericConstruction_실패_시_classId도_롤백된다()
+    public void registergenericconstruction_failure_rolls_back_the_classid_too()
     {
-        // (MessageId, ClassId) reader 키를 선점해 reader 등록 단계에서 실패를 강제한다 — 재배치된 발행
-        // 순서(classId 먼저)의 롤백이 classId 도 되돌리는지 검증. 롤백 누락이면 이후 재시도가
-        // 잘못된 classId 로 성공하는 사고가 생긴다.
-        // 선점: GenericEnvelope<FlatMessage> 는 ClassId=1 로 등록돼 있다(모듈 초기화) — 같은 (messageId, 1) 키로
-        // reader 등록 단계에서 실패를 강제한다. 재배치된 발행 순서(classId 먼저)의 롤백이 classId 도 되돌리는지 검증.
+        // Pre-claims the (MessageId, ClassId) reader key to force a failure at the reader-registration step — verifies that the
+        // rollback of the relocated publish order (classId first) also reverts the classId. A missed rollback would let later
+        // retries succeed with a wrong classId.
+        // Claim: GenericEnvelope<FlatMessage> is registered with ClassId=1 (module init) — the same (messageId, 1) key
+        // forces the failure at the reader-registration step. Verifies the relocated order's rollback reverts the classId too.
         Assert.Throws<InvalidOperationException>(() =>
             MessageSerializer.RegisterGenericConstruction<GenericEnvelope<MemberControlMessage>>(1));
 
-        // 실패했으므로 classId 도 기록돼 있으면 안 된다.
+        // Since it failed, the classId must not be recorded either.
         Assert.Equal(0u, MessageSerializer.GetGenericClassId<GenericEnvelope<MemberControlMessage>>());
     }
 }
 
-// ---------- 동시 등록 경쟁 (KI-38) ----------
+// ---------- Concurrent registration races (KI-38) ----------
 
 /// <summary>
-/// 등록은 검증→prefill→클레임 순서였을 때 같은 타입을 다른 델리게이트로 동시 등록하면 두 스레드 모두
-/// prefill 까지 도달해 권위적인 SerializerCache&lt;T&gt; 를 덮어쓴 뒤 TryAdd 패자만 실패했다 — 패자의
-/// 델리게이트(또는 A/B 혼합)가 잔류해 거부된 등록의 직렬화기가 조용히 실행된다. 클레임 선점(패자는
-/// prefill 전에 예외)으로 불가능해진다.
+/// When registration ran as validate→prefill→claim, concurrently registering the same type with different delegates let both
+/// threads reach prefill, overwrite the authoritative SerializerCache&lt;T&gt;, and only the TryAdd loser fail — the loser's
+/// delegates (or an A/B mix) lingered, quietly running a serializer from a rejected registration. Claim preemption (the loser
+/// throws before prefill) makes that impossible.
 /// </summary>
 public class RegistrationRaceTests
 {
     [Fact]
-    public void 같은_타입을_다른_델리게이트로_동시_등록하면_정확히_한쪽만_실패하고_캐시는_승자만_담는다()
+    public void concurrently_registering_the_same_type_with_different_delegates_fails_exactly_one_side_and_the_cache_holds_only_the_winner()
     {
         var barrier = new Barrier(2);
         var failures = new System.Collections.Concurrent.ConcurrentQueue<Exception>();
@@ -221,23 +222,23 @@ public class RegistrationRaceTests
         var second = Task.Run(() => Register(1_000));
         Task.WaitAll(first, second);
 
-        // 정확히 한쪽만 "already registered" — 다른 예외 유형이 관찰되면 등록 자체가 부패한 것이다.
+        // Exactly one side gets "already registered" — observing a different exception type means the registration itself is corrupted.
         var failure = Assert.Single(failures);
         var invalid = Assert.IsType<InvalidOperationException>(failure);
         Assert.Contains("already registered", invalid.Message);
 
-        // 캐시는 승자의 델리게이트 쌍만 담는다 — A(직렬화)+B(역직렬화) 혼합이면 값이 어긋난다.
+        // The cache holds only the winner's delegate pair — an A(serialize)+B(deserialize) mix would skew values.
         var back = MessageSerializer.Deserialize<ManualRaceMessage>(
             MessageSerializer.Serialize(new ManualRaceMessage { Value = 77 }));
         Assert.Equal(77, back.Value);
     }
 
     [Fact]
-    public void 검증_거부로_실패한_등록은_클레임을_롤백해_재등록이_가능하다()
+    public void registration_failed_by_validation_rolls_back_the_claim_so_reregistration_is_possible()
     {
-        uint flatMessageId = Fixtures.FlatMessage.MessageId; // 이미 등록된 타입이 점유한 와이어 id
+        uint flatMessageId = Fixtures.FlatMessage.MessageId; // the wire id already occupied by a registered type
 
-        // 클레임은 검증보다 먼저 일어난다 — 거부되면 클레임도 롤백되어야 잔류가 없다.
+        // The claim happens before validation — on rejection the claim must roll back too, leaving nothing behind.
         var rejected = Assert.Throws<InvalidOperationException>(() =>
             MessageSerializer.RegisterHasIdMessage<ManualRollbackMessage>(
                 (message, ref writer) => { },
@@ -245,7 +246,7 @@ public class RegistrationRaceTests
                 flatMessageId));
         Assert.Contains("already registered", rejected.Message);
 
-        // 거부 시도의 클레임이 잔류하면 이 재등록은 "already registered" 로 막힌다.
+        // If the rejected attempt's claim lingered, this re-registration would be blocked by "already registered".
         uint ownId = ManualRollbackMessage.MessageId;
         MessageSerializer.RegisterHasIdMessage<ManualRollbackMessage>(
             (message, ref writer) =>
@@ -265,16 +266,16 @@ public class RegistrationRaceTests
     }
 }
 
-// ---------- 진입점 계약 가드 (2026-09-08 테스트 갭 일괄 폐쇄) ----------
+// ---------- Entry point contract guards (2026-09-08 test-gap batch closure) ----------
 
 /// <summary>
-/// 직렬화 진입점들의 null 가드는 구현되어 있었으나 어디에서도 테스트되지 않았다(2026-09-08 감사) —
-/// 계약(ArgumentNullException + ParamName "message")을 실행으로 고정한다.
+/// The null guards on the serialization entry points were implemented but never tested anywhere (2026-09-08 audit) —
+/// pins the contract (ArgumentNullException + ParamName "message") by executing it.
 /// </summary>
 public class SerializeEntryGuardTests
 {
     [Fact]
-    public void 제네릭_Serialize_ref_writer는_null_메시지를_거부한다()
+    public void generic_serialize_with_ref_writer_rejects_null_message()
     {
         var writer = MessageBufferWriter.Create();
         ArgumentNullException? exception = null;
@@ -289,11 +290,11 @@ public class SerializeEntryGuardTests
 
         Assert.NotNull(exception);
         Assert.Equal("message", exception.ParamName);
-        Assert.Equal(0, writer.Length); // 상태 오염 없음
+        Assert.Equal(0, writer.Length); // no state corruption
     }
 
     [Fact]
-    public void 제네릭_Serialize는_null_메시지를_거부한다()
+    public void generic_serialize_rejects_null_message()
     {
         var exception = Assert.Throws<ArgumentNullException>(
             () => MessageSerializer.Serialize<Fixtures.FlatMessage>(null!));
@@ -302,7 +303,7 @@ public class SerializeEntryGuardTests
     }
 
     [Fact]
-    public void SerializePooled은_null_메시지를_거부한다()
+    public void serializepooled_rejects_null_message()
     {
         var exception = Assert.Throws<ArgumentNullException>(
             () => MessageSerializer.SerializePooled<Fixtures.FlatMessage>(null!));

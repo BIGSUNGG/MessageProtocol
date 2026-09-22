@@ -7,15 +7,15 @@ namespace MessageProtocol.Serialize
 {
     public static partial class MessageSerializer
     {
-        /// <summary>MessageId 로 dispatch 되는 reader 델리게이트.</summary>
+        /// <summary>Reader delegate dispatched by MessageId.</summary>
         public delegate object BufferReaderFunc(ref MessageBufferReader reader);
 
         static readonly ConcurrentDictionary<uint, BufferReaderFunc> _readerDispatch = new();
 
-        /// <summary>제네릭 구성 디스패치: (MessageId, ClassId) → reader. 키는 두 값을 24비트씩 합성한 ulong.</summary>
+        /// <summary>Generic construction dispatch: (MessageId, ClassId) → reader. The key is a ulong combining both values at 24 bits each.</summary>
         static readonly ConcurrentDictionary<ulong, BufferReaderFunc> _genericReaderDispatch = new();
 
-        /// <summary>(MessageId, ClassId) 등록 소유 타입. 구성 간 충돌 검출용.</summary>
+        /// <summary>Registered owner type of a (MessageId, ClassId) pair. Used to detect conflicts between constructions.</summary>
         static readonly ConcurrentDictionary<ulong, Type> _registeredGenericIds = new();
 
         internal static ulong GenericDispatchKey(uint messageId, uint classId)
@@ -23,7 +23,7 @@ namespace MessageProtocol.Serialize
             return ((ulong)messageId << 24) | (classId & MessageWireFormat.MessageIdValueMask);
         }
 
-        /// <summary>제네릭 hot path 역직렬화 (딕셔너리 조회·박싱 없음).</summary>
+        /// <summary>Generic hot-path deserialization (no dictionary lookup, no boxing).</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static T Deserialize<T>(ref MessageBufferReader reader) where T : IMessageSerializable<T>
         {
@@ -32,7 +32,7 @@ namespace MessageProtocol.Serialize
             return deserialize!(ref reader);
         }
 
-        /// <summary>제네릭 경로: ReadOnlySpan 에서 역직렬화.</summary>
+        /// <summary>Generic path: deserializes from a ReadOnlySpan.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static T Deserialize<T>(ReadOnlySpan<byte> data) where T : IMessageSerializable<T>
         {
@@ -44,10 +44,10 @@ namespace MessageProtocol.Serialize
         }
 
         /// <summary>
-        /// 제네릭 경로(전체 소비 검사): 프레임 전체를 정확히 소비해야 성공한다. 남은 바이트가 있으면
-        /// <see cref="System.IO.InvalidDataException"/> — 피어가 이 타입과 다른 멤버 레이아웃으로 쓴 프레임
-        /// (스키마 표류 — ADR-0006 레이아웃 동결 위반, 예: 필드 제거)을 조용한 데이터 유실 대신 크게 실패시킨다.
-        /// 기본 <see cref="Deserialize{T}(ReadOnlySpan{byte})"/> 은 뒤에 붙은 여유 바이트를 허용한다.
+        /// Generic path (full-consumption check): succeeds only when the whole frame is consumed exactly. Any remaining bytes
+        /// throw <see cref="System.IO.InvalidDataException"/> — a frame written by a peer with a different member layout for this type
+        /// (schema drift — a violation of the ADR-0006 layout freeze, e.g. a removed field) fails loudly instead of silently losing data.
+        /// The basic <see cref="Deserialize{T}(ReadOnlySpan{byte})"/> allows trailing bytes.
         /// </summary>
         public static T DeserializeExact<T>(ReadOnlySpan<byte> data) where T : IMessageSerializable<T>
         {
@@ -63,14 +63,14 @@ namespace MessageProtocol.Serialize
             return result;
         }
 
-        /// <summary>제네릭 경로: ReadOnlyMemory 에서 역직렬화.</summary>
+        /// <summary>Generic path: deserializes from a ReadOnlyMemory.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static T Deserialize<T>(ReadOnlyMemory<byte> data) where T : IMessageSerializable<T>
         {
             return Deserialize<T>(data.Span);
         }
 
-        /// <summary>제네릭 경로: byte[] 호환 경로.</summary>
+        /// <summary>Generic path: byte[] compatibility path.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static T Deserialize<T>(byte[] data) where T : IMessageSerializable<T>
         {
@@ -90,27 +90,27 @@ namespace MessageProtocol.Serialize
                 $"'public static {typeof(T).Name} Deserialize(byte[])'.");
         }
 
-        /// <summary>object dispatch 역직렬화: 헤더 MessageId 로 등록된 타입에 라우팅한다 (Standalone/Group 만).</summary>
+        /// <summary>object dispatch deserialization: routes to the type registered under the header MessageId (Standalone/Group only).</summary>
         public static object Deserialize(byte[] data)
         {
             if (data is null) throw new ArgumentNullException(nameof(data));
             return Deserialize(new ReadOnlySpan<byte>(data));
         }
 
-        /// <summary>object dispatch 역직렬화: ReadOnlyMemory 입력.</summary>
+        /// <summary>object dispatch deserialization: ReadOnlyMemory input.</summary>
         public static object Deserialize(ReadOnlyMemory<byte> data) => Deserialize(data.Span);
 
-        /// <summary>object dispatch 역직렬화: ReadOnlySpan 입력. 제네릭 메시지는 (MessageId, ClassId) 로 구성에 라우팅한다.</summary>
+        /// <summary>object dispatch deserialization: ReadOnlySpan input. Generic messages route to their construction by (MessageId, ClassId).</summary>
         public static object Deserialize(ReadOnlySpan<byte> data)
         {
             return DeserializeCore(data, out _);
         }
 
         /// <summary>
-        /// object dispatch 역직렬화(전체 소비 검사): 프레임 전체를 정확히 소비해야 성공한다.
-        /// 남은 바이트가 있으면 <see cref="System.IO.InvalidDataException"/> — 피어가 이 타입과 다른 멤버 레이아웃으로
-        /// 쓴 프레임(스키마 표류 — ADR-0006 레이아웃 동결 위반)을 조용한 데이터 유실 대신 크게 실패시킨다.
-        /// 기본 <see cref="Deserialize(ReadOnlySpan{byte})"/> 은 전송 계층 프레이밍 여유 등으로 뒤에 붙은 바이트를 허용한다.
+        /// object dispatch deserialization (full-consumption check): succeeds only when the whole frame is consumed exactly.
+        /// Any remaining bytes throw <see cref="System.IO.InvalidDataException"/> — a frame written by a peer with a different member layout
+        /// (schema drift — a violation of the ADR-0006 layout freeze) fails loudly instead of silently losing data.
+        /// The basic <see cref="Deserialize(ReadOnlySpan{byte})"/> allows trailing bytes, e.g. transport-layer framing padding.
         /// </summary>
         public static object DeserializeExact(ReadOnlySpan<byte> data)
         {
@@ -122,7 +122,7 @@ namespace MessageProtocol.Serialize
             return result;
         }
 
-        /// <summary>라우팅 공통 본체 — 소비한 바이트 수를 반환한다(전체 소비 검사용).</summary>
+        /// <summary>Shared routing body — returns the number of bytes consumed (for the full-consumption check).</summary>
         static object DeserializeCore(ReadOnlySpan<byte> data, out int consumed)
         {
             if (data.Length == 0) throw new ArgumentException("Message data is empty.", nameof(data));
@@ -132,9 +132,9 @@ namespace MessageProtocol.Serialize
             bool generic = MessageWireFormat.IsGenericMessage(header);
             if (!generic && (flags & MessageFlag.IdMessage) == 0)
             {
-                // 와이어 내용 불법(플래그 비트)은 InvalidDataException 이다 — 캐스트가 일어난 적이 없으므로
-                // InvalidCastException 은 유형부터 오해를 주었고 신뢰 경계 퍼저의 깨끗한 거부 목록에도
-                // 잡히지 않았다(2026-09-08 퍼저 발견, KI-41 괘련).
+                // Illegal wire content (a flag bit) is an InvalidDataException — no cast ever happens, so
+                // InvalidCastException both mischaracterized the failure and fell outside the fuzzer's clean-rejection
+                // list at the trust boundary (found by the 2026-09-08 fuzzer, KI-41 chain).
                 throw new System.IO.InvalidDataException("Message is not a standalone or group message; the header flag bits are invalid.");
             }
 
@@ -170,7 +170,7 @@ namespace MessageProtocol.Serialize
             return value;
         }
 
-        /// <summary>전체 소비 검사 실패 — 와이어 내용 불법으로 보고한다(경계·인자 오류와 구분).</summary>
+        /// <summary>Full-consumption check failure — reported as illegal wire content (distinct from boundary/argument errors).</summary>
         [MethodImpl(MethodImplOptions.NoInlining)]
         static void ThrowTrailingBytes(int consumed, int total)
         {
@@ -180,10 +180,11 @@ namespace MessageProtocol.Serialize
                 $"Per ADR-0006, published message layouts are frozen — introduce a new MessageId type for layout changes.");
         }
 
-        /// <summary>중첩 object dispatch: 현재 reader 위치의 헤더로 등록된 타입에 라우팅한다. 제네릭 헤더는 (MessageId, ClassId) 라우팅.</summary>
+        /// <summary>Nested object dispatch: routes to the type registered under the header at the current reader position. Generic headers route by (MessageId, ClassId).</summary>
         /// <remarks>
-        /// 중첩 객체 한 수준으로 계산된다(<see cref="MessageBufferReader.EnterNestedObject"/>) — 타입 매개변수 멤버·외부 호출자의
-        /// 재귀가 reader 깊이 카운터에 연결되어 작은 적대 프레임의 무한 재귀(스택 오버플로)를 막는다 (Known-Issues KI-14).
+        /// Counts as one level of nesting (<see cref="MessageBufferReader.EnterNestedObject"/>) — type-parameter members and
+        /// external callers' recursion tie into the reader's depth counter, preventing infinite recursion (stack overflow)
+        /// from a small adversarial frame (Known-Issues KI-14).
         /// </remarks>
         public static object DeserializeFromReader(ref MessageBufferReader reader)
         {
@@ -211,7 +212,7 @@ namespace MessageProtocol.Serialize
                 throw new KeyNotFoundException($"Message type with ID {messageId} is not registered.");
             }
 
-            // 공개 경유 지점이라 수동 구현이 예외 후 같은 reader 를 계속 쓸 수 있다 — finally 로 짝을 맞춘다.
+            // This is a public entry point, so a manual implementation may keep using the same reader after an exception — pair the calls in a finally.
             reader.EnterNestedObject();
             try
             {
@@ -275,9 +276,9 @@ namespace MessageProtocol.Serialize
         internal static bool TryRemoveGenericReaderInvoker(uint messageId, uint classId)
         {
             ulong key = GenericDispatchKey(messageId, classId);
-            // 등록은 owner→dispatch 순서로 발행하므로 제거(롤백)는 역순 dispatch→owner 로 — 순서가 같으면
-            // 디스패치가 아직 살아있는 찰나에 owner 가 사라져, 같은 키의 재등록이 owner 를 선점하고 롤백이
-            // 새 등록의 디스패치를 지우는 창이 열린다(KI-38 감사 FINDING 3, 등록 실패 경로에서만 도달).
+            // Registration publishes owner→dispatch, so removal (rollback) goes in reverse, dispatch→owner — with the same order
+            // there would be a window where the owner disappears while dispatch is still alive, letting a re-registration of the same key
+            // claim the owner and have the rollback erase the new registration's dispatch (KI-38 audit FINDING 3, reached only on failed registration paths).
             bool removed = _genericReaderDispatch.TryRemove(key, out _);
             _registeredGenericIds.TryRemove(key, out _);
             return removed;

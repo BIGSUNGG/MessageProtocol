@@ -4,7 +4,7 @@ using Microsoft.CodeAnalysis;
 
 namespace MessageProtocol.CodeGenerator.Metadata
 {
-    /// <summary>메시지 타입 하나의 속성·멤버·계층 메타데이터.</summary>
+    /// <summary>Attribute, member, and hierarchy metadata for a single message type.</summary>
     internal sealed class TypeMetadata
     {
         public const uint MaxMessageAttributeValue = MessageWireFormat.MessageIdValueMask;
@@ -19,19 +19,19 @@ namespace MessageProtocol.CodeGenerator.Metadata
         public bool IsGroupRootMessage { get; }
         public bool IsGroupElementMessage { get; }
 
-        /// <summary>[Message] 또는 무인수 explicit 속성으로 MessageId 를 FullName 해시로 얻는 타입인지 (종류 추론·충돌 진단 근거).</summary>
+        /// <summary>Whether the type derives its MessageId from a FullName hash via [Message] or a parameterless explicit attribute (grounds for kind inference and collision diagnostics).</summary>
         public bool IsHashIdMessage { get; }
 
         public uint StandaloneMessageId { get; }
         public uint GroupRootMessageId { get; }
         public uint GroupElementMessageId { get; }
 
-        /// <summary>생성 코드 선언·시그니처에 쓰는 이름 (타입 매개변수 포함, 예: <c>Msg&lt;T&gt;</c>).</summary>
+        /// <summary>Name used in generated declarations and signatures (includes type parameters, e.g. <c>Msg&lt;T&gt;</c>).</summary>
         public string DeclarationName => Symbol.Name + (Symbol.TypeParameters.Length == 0
             ? string.Empty
             : "<" + string.Join(", ", Symbol.TypeParameters.Select(static tp => tp.Name)) + ">");
 
-        /// <summary>선언된 접근성 한정자 — partial 생성부는 원본 선언의 접근성과 일치해야 한다(public 이 아닌 메시지 지원).</summary>
+        /// <summary>Declared accessibility keyword — the generated partial must match the original declaration's accessibility (supports non-public messages).</summary>
         public string AccessibilityKeyword => Symbol.DeclaredAccessibility switch
         {
             Accessibility.Public => "public",
@@ -44,12 +44,13 @@ namespace MessageProtocol.CodeGenerator.Metadata
         };
 
         /// <summary>
-        /// 자동 등록([ModuleInitializer]) 가능 여부. 제네릭 타입·제네릭 컨테이닝 타입 안의 타입은 불가능하다.
+        /// Whether auto-registration ([ModuleInitializer]) is possible. Impossible inside generic types or
+        /// generic containing types.
         /// </summary>
         public bool CanUseModuleInitializer => !Symbol.IsGenericType
             && ContainingTypes.All(static c => string.IsNullOrEmpty(c.TypeParameters));
 
-        /// <summary>헤더 하위 니블(0~15). 속성 생성자가 category 를 안 주면 0.</summary>
+        /// <summary>Header's lower nibble (0–15). Zero when the attribute constructor omits the category.</summary>
         public byte Category { get; }
 
         public TypeMetadata? BaseTypeMetadata { get; }
@@ -59,14 +60,14 @@ namespace MessageProtocol.CodeGenerator.Metadata
         MemberMetadata[]? _members;
 
         /// <summary>
-        /// 제네릭 와이어 메시지 여부: 제네릭 + Standalone 선언은 구성 선언과 무관하게
-        /// 항상 헤더 플래그 Generic(0) + 구성 클래스 ID 슬롯을 쓴다.
+        /// Whether this is a generic wire message: generic + Standalone declarations always use header flag
+        /// Generic(0) plus a construction class-ID slot, regardless of construction declarations.
         /// </summary>
         public bool IsGenericWireMessage => Symbol.IsGenericType && IsStandaloneMessage;
 
         /// <summary>
-        /// FullName 해시가 0 으로 조립되는 Child — 0 은 예약값이라 MSGPROT017 로 생성이 거부된다(자동 재해시 없음).
-        /// Generate 의 거부 지점과 충돌 판정 게이트가 같은 판정을 공유한다(KI-43).
+        /// A Child whose FullName hash assembles to 0 — 0 is reserved, so generation is rejected with MSGPROT017
+        /// (no automatic rehash). Generate's rejection point and the conflict-detection gate share this judgment (KI-43).
         /// </summary>
         internal bool IsHashZeroGroupElement => IsHashIdMessage && IsGroupElementMessage && GroupElementMessageId == 0;
 
@@ -79,16 +80,16 @@ namespace MessageProtocol.CodeGenerator.Metadata
 
             var messageAttribute = typeSymbol.FindAttribute(references.MessageAttributeType);
 
-            // [Message] 단일 속성에서 종류·수동 Id·category 를 해독한다. 정의되지 않은 Kind 값이면
-            // 검증기(MSGPROT018)가 이미 보고했으므로 Automatic 으로 안전하게 되돌린다.
+            // Decode kind, manual id, and category from the single [Message] attribute. An undefined Kind value was
+            // already reported by the validator (MSGPROT018), so safely fall back to Automatic.
             if (!TryDecodeMessageAttribute(messageAttribute, out MessageKind kind, out uint manualId, out byte messageCategory))
             {
                 kind = MessageKind.Automatic;
             }
 
-            // Automatic 종류 추론: 조상에 메시지가 있으면 Child(GroupElement),
-            // 없고 이 컴파일에 [Message] 파생이 있으면 Parent(GroupRoot), 나머지는 Standalone.
-            // NonId 조상은 세지 않는다 — 와이어 정체성(루트 역할)이 없다.
+            // Automatic kind inference: a message ancestor makes it Child (GroupElement); no ancestor but a
+            // [Message] descendant in this compilation makes it Parent (GroupRoot); otherwise Standalone.
+            // NonId ancestors are not counted — they have no wire identity (root role).
             bool inferredStandalone = false, inferredGroupRoot = false, inferredGroupElement = false;
             if (messageAttribute != null && kind == MessageKind.Automatic)
             {
@@ -112,8 +113,9 @@ namespace MessageProtocol.CodeGenerator.Metadata
             IsGroupElementMessage = messageAttribute != null && (kind == MessageKind.Child || inferredGroupElement);
             IsGroupMessage = IsGroupRootMessage || IsGroupElementMessage;
 
-            // 수동 Id 를 생략(0)하면 모든 Id 종류(Automatic 추론 포함)가 FullName 해시를 쓴다.
-            // 해시는 선언 이름만으로 결정되므로 동일 타입이 어느 컴파일에서 해시돼도 같은 값을 가진다(와이어 안정성).
+            // Omitting the manual id (0) makes every id kind (Automatic inference included) use the FullName hash.
+            // The hash depends only on the declared name, so the same type hashes to the same value in any
+            // compilation (wire stability).
             IsHashIdMessage = messageAttribute != null && !IsNonIdMessage && manualId == 0;
             uint fullNameHash = IsHashIdMessage ? MessageIdHash.FromFullName(BuildFullName(typeSymbol)) : 0;
             uint idValue = manualId != 0 ? manualId : fullNameHash;
@@ -121,7 +123,7 @@ namespace MessageProtocol.CodeGenerator.Metadata
             GroupRootMessageId = IsGroupRootMessage ? idValue : 0;
             GroupElementMessageId = IsGroupElementMessage ? idValue : 0;
 
-            // NonId 는 id·category 인자 금지(MSGPROT018) — 검증을 통과하지 못한 조합은 0 으로 되돌린다.
+            // NonId forbids id and category arguments (MSGPROT018) — combinations that fail validation fall back to 0.
             Category = IsNonIdMessage ? (byte)0 : messageCategory;
 
             var baseTypeSymbol = typeSymbol.BaseType;
@@ -134,13 +136,13 @@ namespace MessageProtocol.CodeGenerator.Metadata
         }
 
         /// <summary>
-        /// 직렬화 멤버(무시 속성 &gt; 포함 속성 &gt; public 순). **첫 접근에서 계산**한다 —
-        /// MessageId 충돌 검사처럼 속성만 필요한 컴파일 전체 패스에서 `TypeMetadata` 를 만들 때
-        /// 모든 후보 타입의 멤버를 순회·`MemberMetadata` 생성하지 않도록 (Known-Issues KI-31).
+        /// Serializable members (ignore attribute &gt; include attribute &gt; public). **Computed on first access** so
+        /// that whole-compilation passes that only need attributes — like the MessageId conflict check — do not
+        /// walk every candidate type's members and construct `MemberMetadata` (Known-Issues KI-31).
         /// </summary>
         public MemberMetadata[] Members => _members ??= ComputeMembers(Symbol, _references);
 
-        /// <summary>조상(자기 자신 제외) 중 [Message] 선언이 있는지 — 속성은 Inherited = false 라 선언부만 확인한다.</summary>
+        /// <summary>Whether any ancestor (excluding self) declares [Message] — the attribute is Inherited = false, so only declarations count.</summary>
         static bool HasMessageAncestor(INamedTypeSymbol typeSymbol, AttributeReferences references)
         {
             for (var baseType = typeSymbol.BaseType;
@@ -157,8 +159,8 @@ namespace MessageProtocol.CodeGenerator.Metadata
         }
 
         /// <summary>
-        /// 해시 대상 FullName — BCL <c>Type.FullName</c> 관례: 네임스페이스 점 + 중첩 <c>+</c> + 제네릭 차수 <c>`n</c>.
-        /// 타입 매개변수 이름은 포함하지 않는다(이름 리팩터링으로 ID 가 바뀌면 안 된다).
+        /// Hash target FullName — BCL <c>Type.FullName</c> convention: namespace dots + nesting <c>+</c> + generic arity <c>`n</c>.
+        /// Type parameter names are excluded (the ID must not change on a type-parameter rename).
         /// </summary>
         static string BuildFullName(INamedTypeSymbol typeSymbol)
         {
@@ -169,7 +171,7 @@ namespace MessageProtocol.CodeGenerator.Metadata
             var containingTypes = new Stack<string>();
             for (var current = typeSymbol.ContainingType; current != null; current = current.ContainingType)
             {
-                containingTypes.Push(current.MetadataName); // MetadataName 은 제네릭 차수(`n) 를 포함한다
+                containingTypes.Push(current.MetadataName); // MetadataName includes the generic arity (`n)
             }
 
             string nested = containingTypes.Count > 0 ? string.Join("+", containingTypes) + "+" : string.Empty;
@@ -178,12 +180,13 @@ namespace MessageProtocol.CodeGenerator.Metadata
 
         static MemberMetadata[] ComputeMembers(INamedTypeSymbol typeSymbol, AttributeReferences references)
         {
-            // 무시 속성 > 포함 속성 > public 순으로 직렬화 대상을 고른다.
+            // Serializable target selection order: ignore attribute > include attribute > public.
             return typeSymbol.GetMembers()
                 .Where(m => m is IFieldSymbol || m is IPropertySymbol)
                 .Where(m => !m.IsStatic)
-                // 인덱서는 IPropertySymbol 이지만 Roslyn 이름이 "this[]" 라 멤버로 뽑히면 `message.this[]` 같은
-                // 문법 오류 코드가 진단 없이 생성된다. 인수를 받아야 하므로 직렬화 멤버가 될 수 없다 (Known-Issues KI-23).
+                // Indexers are IPropertySymbols, but their Roslyn name "this[]" would emit syntactically invalid code
+                // like `message.this[]` without a diagnostic. They take arguments, so they can never be serializable
+                // members (Known-Issues KI-23).
                 .Where(m => m is not IPropertySymbol { IsIndexer: true })
                 .Where(m =>
                 {
@@ -198,13 +201,14 @@ namespace MessageProtocol.CodeGenerator.Metadata
         }
 
         /// <summary>
-        /// 와이어 페이로드 멤버 순서 — 베이스 체인을 루트 쪽부터 내려오며 **선언 순서**로 병합하고,
-        /// 같은 이름의 파생 멤버가 베이스 멤버를 그림자 제거할 때 **베이스의 위치**를 유지한 채 심볼만 바꾼다.
+        /// Wire payload member order — merges the base chain from the root down in **declaration order**, and when a
+        /// derived member shadows a base member of the same name, replaces only the symbol while keeping the
+        /// **base's position**.
         /// <para>
-        /// 이미터와 그래프가 이 한 구현을 공유한다(이전에는 동일한 로직이 두 곳에 복제되어 있었다).
-        /// 순서를 `Dictionary.Values` 열거에 맡기지 않는 이유가 핵심이다 — 그 순서는 삽입 순서일 뿐 규약이 아니라
-        /// BCL 구현 세부모다. 페이로드 바이트 순서는 송수신이 반드시 일치해야 하는 와이어 형식이므로
-        /// 명시적으로 고정한다 (Known-Issues KI-4).
+        /// The emitter and the graph share this one implementation (the same logic used to be duplicated in two
+        /// places). The key point is why order is not delegated to `Dictionary.Values` enumeration — that order is
+        /// merely insertion order, a BCL implementation detail rather than a contract. Payload byte order is a wire
+        /// format that sender and receiver must agree on, so it is pinned explicitly (Known-Issues KI-4).
         /// </para>
         /// </summary>
         public static IReadOnlyList<MemberMetadata> GetWireMembers(TypeMetadata typeMeta)
@@ -229,7 +233,7 @@ namespace MessageProtocol.CodeGenerator.Metadata
             {
                 if (indexByName.TryGetValue(member.Name, out int index))
                 {
-                    // 그림자 제거: 위치는 베이스 선언 자리, 타입·심볼은 파생 것으로.
+                    // Shadow removal: keep the base declaration's position, take the derived type and symbol.
                     ordered[index] = member;
                 }
                 else
@@ -240,13 +244,13 @@ namespace MessageProtocol.CodeGenerator.Metadata
             }
         }
 
-        /// <summary>flags + category + id 값을 조립한 프로토콜 MessageId.</summary>
+        /// <summary>Protocol MessageId assembled from flags + category + id value.</summary>
         public uint GetMessageId()
         {
             MessageFlag flags;
             if (IsGenericWireMessage)
             {
-                // 제네릭 메시지는 전용 헤더 플래그(0) — 구성 클래스 ID가 헤더 뒤에 따라온다.
+                // Generic messages use the dedicated header flag (0) — the construction class ID follows the header.
                 flags = MessageFlag.Generic;
             }
             else
@@ -270,9 +274,9 @@ namespace MessageProtocol.CodeGenerator.Metadata
         }
 
         /// <summary>
-        /// [Message] 생성자 인자를 해독한다: MessageKind 인자는 kind, MessageCategory 인자는 category 니블,
-        /// 정수 인자는 수동 Id(0 = 생략 → FullName 해시). kind 가 정의되지 않은 값이면 false —
-        /// 검증기가 MSGPROT018 로 보고한다.
+        /// Decodes [Message] constructor arguments: a MessageKind argument gives the kind, a MessageCategory argument
+        /// the category nibble, and an integer argument the manual id (0 = omitted → FullName hash). Returns false for
+        /// an undefined kind value — the validator reports it as MSGPROT018.
         /// </summary>
         internal static bool TryDecodeMessageAttribute(
             AttributeData? attributeData,

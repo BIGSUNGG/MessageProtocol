@@ -8,25 +8,25 @@ using System.Threading;
 namespace MessageProtocol.Serialize
 {
     /// <summary>
-    /// 메시지 등록·직렬화·역직렬화 정적 진입점.
-    /// 생성 코드는 <c>[ModuleInitializer]</c> 에서 델리게이트·MessageId 를 직접 넘겨 등록한다.
+    /// Static entry point for message registration, serialization, and deserialization.
+    /// Generated code registers delegates and MessageIds directly from a <c>[ModuleInitializer]</c>.
     /// </summary>
     public static partial class MessageSerializer
     {
         static readonly ConcurrentDictionary<Type, byte> _registeredTypes = new();
         static readonly ConcurrentDictionary<uint, Type> _registeredMessageIds = new();
 
-        /// <summary>닫힌 제네릭 구성별 클래스 ID. 선언부·분산 선언 양쪽 등록이 공유한다.</summary>
+        /// <summary>Class IDs per closed generic construction. Shared by registrations from the declaration and from partial declarations elsewhere.</summary>
         static readonly ConcurrentDictionary<Type, uint> _genericClassIds = new();
 
-        /// <summary>닫힌 제네릭 구성의 클래스 ID 조회. 미등록 구성은 0.</summary>
+        /// <summary>Looks up the class ID of a closed generic construction. Returns 0 for unregistered constructions.</summary>
         public static uint GetGenericClassId<T>() where T : IMessageSerializable<T>
         {
             return _genericClassIds.TryGetValue(typeof(T), out uint classId) ? classId : 0;
         }
 
         /// <summary>
-        /// ID 메시지 등록 fast path. <see cref="SerializerCache{T}"/> 를 리플렉션 없이 채운다.
+        /// Fast path for registering ID messages. Fills <see cref="SerializerCache{T}"/> without reflection.
         /// </summary>
         public static void RegisterHasIdMessage<T>(
             TypedSerializeRefAction<T> serialize,
@@ -42,12 +42,12 @@ namespace MessageProtocol.Serialize
             serializeBytes ??= CreateSerializeBytesWrapper(serialize);
             deserializeBytes ??= CreateDeserializeBytesWrapper(deserialize);
 
-            // 클레임 우선(KI-38): 타입 클레임을 **prefill 보다 먼저** 원자적으로 선점한다. 검증→prefill→클레임 순서였을 때
-            // 같은 타입을 다른 델리게이트로 동시 등록하면 두 스레드 모두 검증을 통과하고 각자 prefill 이 캐시를
-            // 덮어쓴 뒤 TryAdd 의 패자만 "already registered" 로 실패했다 — 패자의 델리게이트(또는 A/B 혼합)가
-            // 권위적인 SerializerCache<T> 에 잔류하고, 디스패치 invoker 는 캐시를 경유하므로 **거부된 등록의
-            // 직렬화기가 조용히 실행**된다(KI-11 무오엄 클래스의 TOCTOU 재발). 클레임 선점으로 패자는 prefill
-            // 전에 예외를 받고 캐시는 승자의 값만 담는다. 실패 시 클레임은 롤백한다.
+            // Claim-first (KI-38): atomically claim the type **before** the prefill. With the old verify→prefill→claim order,
+            // concurrent registrations of the same type with different delegates both passed validation, each prefill overwrote
+            // the cache, and only the TryAdd loser failed with "already registered" — the loser's delegates (or an A/B mix)
+            // remained in the authoritative SerializerCache<T>, and since dispatch invokers go through the cache, the
+            // **rejected registration's serializer silently ran** (a TOCTOU recurrence of the KI-11 no-pollution class).
+            // Claiming first makes the loser throw before prefill and keeps only the winner's values in the cache. The claim is rolled back on failure.
             if (!_registeredTypes.TryAdd(typeof(T), 0))
             {
                 throw new InvalidOperationException($"Message type '{typeof(T).FullName}' is already registered.");
@@ -55,9 +55,9 @@ namespace MessageProtocol.Serialize
 
             try
             {
-                // 등록 검증을 prefill 보다 먼저 — prefill 이 먼저 돌면 거부된 등록의 MessageId/HasId 가
-                // SerializerCache<T> 에 영구 잔류하고, 이후 올바른 등록의 prefill 은 복구 블록(Serialize is null)
-                // 을 건너뛰므로 잘못된 값이 남는다 (Known-Issues KI-11 잔존, 2026-09-07 해소).
+                // Validate before the prefill — if the prefill ran first, the rejected registration's MessageId/HasId would
+                // persist in SerializerCache<T> forever, and a later valid registration's prefill skips the recovery block
+                // (Serialize is null), leaving the bad values in place (Known-Issues KI-11 residue, resolved 2026-09-07).
                 ValidateRegistration(typeof(T), messageId, hasId: true, typeClaimed: true);
 
                 PrefillSerializerCache(serialize, deserialize, serializeBytes, deserializeBytes, messageId, hasId: true);
@@ -74,10 +74,10 @@ namespace MessageProtocol.Serialize
             }
         }
 
-        /// <summary>ID 메시지 등록 리플렉션 경로. 수동 구현 타입이거나 델리게이트를 넘기지 않을 때 사용한다.</summary>
+        /// <summary>Reflection path for registering ID messages. Used for manually implemented types or when no delegates are supplied.</summary>
         public static void RegisterHasIdMessage<T>() where T : IHasIdMessageSerializable<T>
         {
-            // 등록 시점에 검증 — 나중에 object dispatch 에서 null 델리게이트를 만나는 것보다 여기서 알려주는 쪽이 낫다.
+            // Validate at registration time — better to fail here than to hit a null delegate later during object dispatch.
             if (SerializerCache<T>.Serialize is null) ThrowMissingSerialize<T>();
 
             if (!SerializerCache<T>.HasId)
@@ -95,7 +95,7 @@ namespace MessageProtocol.Serialize
                     : static (ref MessageBufferReader r) => (object)Deserialize<T>(ref r));
         }
 
-        /// <summary>NonId 메시지 등록 fast path.</summary>
+        /// <summary>Fast path for registering NonId messages.</summary>
         public static void RegisterNonIdMessage<T>(
             TypedSerializeRefAction<T> serialize,
             TypedDeserializeRefFunc<T>? deserialize = null,
@@ -111,8 +111,8 @@ namespace MessageProtocol.Serialize
                 deserializeBytes ??= CreateDeserializeBytesWrapper(deserialize);
             }
 
-            // HasId 경로와 같은 이유로 검증이 prefill 보다 먼저 — 중복 등록 거부 시 캐시 오업 방지 (KI-11 잔존).
-            // 클레임 우선은 여기도 동일(KI-38): 검증·prefill 전에 원자적으로 선점해 패자가 prefill 전에 실패하게 한다.
+            // As in the HasId path, validation runs before the prefill — prevents cache pollution when a duplicate registration is rejected (KI-11 residue).
+            // Claim-first applies here too (KI-38): claim atomically before validation and prefill so the loser fails before prefill.
             if (!_registeredTypes.TryAdd(typeof(T), 0))
             {
                 throw new InvalidOperationException($"Message type '{typeof(T).FullName}' is already registered.");
@@ -137,8 +137,8 @@ namespace MessageProtocol.Serialize
         }
 
         /// <summary>
-        /// 닫힌 제네릭 구성 등록. (MessageId, ClassId) 키로 writer·reader 를 디스패치에 올려
-        /// 송수신 양쪽 모두에서 object dispatch 가 동작하게 한다.
+        /// Registers a closed generic construction. Publishes the writer and reader under the (MessageId, ClassId) key so
+        /// object dispatch works on both the sending and receiving sides.
         /// </summary>
         public static void RegisterGenericConstruction<T>(uint classId) where T : IHasIdMessageSerializable<T>
         {
@@ -172,10 +172,10 @@ namespace MessageProtocol.Serialize
             bool readerRegistered = false;
             try
             {
-                // 발행 순서: classId → writer → reader. 생성 코드의 쓰기 경로는 GetGenericClassId<T> 를 읽는데,
-                // writer invoker 를 먼저 발행하면 object dispatch 로 진입한 Serialize 가 classId 0 을 읽고
-                // "not registered" 예외를 낸다(수동 시작 등록과 직렬화의 경쟁 — 감사 원장 MEDIUM, 2026-09-07 해소).
-                // classId 를 가장 먼저 발행해 writer 가 보이는 순간 classId 도 보이게 한다.
+                // Publication order: classId → writer → reader. The generated write path reads GetGenericClassId<T>;
+                // if the writer invoker were published first, Serialize entering via object dispatch would read classId 0
+                // and throw a "not registered" exception (a race between manual eager registration and serialization — audit ledger MEDIUM, resolved 2026-09-07).
+                // Publishing classId first guarantees it is visible the moment the writer is.
                 _genericClassIds[typeof(T)] = classId;
                 classIdRecorded = true;
 
@@ -196,7 +196,7 @@ namespace MessageProtocol.Serialize
             }
         }
 
-        /// <summary>NonId 메시지 등록 리플렉션 경로.</summary>
+        /// <summary>Reflection path for registering NonId messages.</summary>
         public static void RegisterNonIdMessage<T>() where T : IMessageSerializable<T>
         {
             if (SerializerCache<T>.Serialize is null) ThrowMissingSerialize<T>();
@@ -207,8 +207,8 @@ namespace MessageProtocol.Serialize
         }
 
         /// <summary>
-        /// 리플렉션 기반 등록. 타입이 <see cref="IMessageSerializable{T}"/> 또는
-        /// <see cref="IHasIdMessageSerializable{T}"/> 를 구현해야 한다.
+        /// Reflection-based registration. The type must implement <see cref="IMessageSerializable{T}"/> or
+        /// <see cref="IHasIdMessageSerializable{T}"/>.
         /// </summary>
         public static void RegisterType(Type type)
         {
@@ -232,7 +232,7 @@ namespace MessageProtocol.Serialize
             }
 
             string methodName = iHasId != null ? nameof(RegisterHasIdMessage) : nameof(RegisterNonIdMessage);
-            // 매개변수 없는 오버로드만 선택 (델리게이트 오버로드와 구분).
+            // Pick only the parameterless overload (to distinguish it from the delegate-taking overloads).
             var generic = typeof(MessageSerializer)
                 .GetMethods(BindingFlags.Public | BindingFlags.Static)
                 .First(m => m.Name == methodName
@@ -276,8 +276,9 @@ namespace MessageProtocol.Serialize
         }
 
         /// <summary>
-        /// Prefill 홀더에 델리게이트를 심은 뒤 <see cref="SerializerCache{T}"/> cctor 를 돌려 리플렉션을 건너뛴다.
-        /// 홀더가 별도 타입이라 설정 중에는 캐시 cctor 가 트리거되지 않는다. cctor 가 이미 돌았다면(등록 전 조기 접근) CLR 은 다시 돌리지 않으므로 캐시 필드를 직접 채워 복구한다.
+        /// Plants the delegates into the prefill holder, then runs the <see cref="SerializerCache{T}"/> cctor to skip reflection.
+        /// Because the holder is a separate type, the cache's cctor is not triggered while it is being set up. If the cctor already ran
+        /// (early access before registration), the CLR will not run it again, so the cache fields are filled directly to recover.
         /// </summary>
         static void PrefillSerializerCache<T>(
             TypedSerializeRefAction<T> serialize,
@@ -293,17 +294,17 @@ namespace MessageProtocol.Serialize
             SerializerCachePrefill<T>.DeserializeBytes = deserializeBytes;
             SerializerCachePrefill<T>.MessageId = messageId;
             SerializerCachePrefill<T>.HasId = hasId;
-            // volatile 쓰기 = release store — 위 필드들이 IsSet=true 보다 먼저 다른 스레드에 보이도록 publication 한다 (KI-11).
+            // The volatile write is a release store — publishes the fields above so they become visible to other threads before IsSet=true (KI-11).
             SerializerCachePrefill<T>.IsSet = true;
 
             RuntimeHelpers.RunClassConstructor(typeof(SerializerCache<T>).TypeHandle);
 
-            // 등록 전에 캐시가 이미 초기화됐으면(조기 접근) cctor 가 Prefill 을 보지 못했고 CLR 은 cctor 를 다시 돌리지 않는다 —
-            // 캐시 필드가 readonly 가 아니므로 여기서 직접 채워 복구한다. 이 단계가 없으면 그 타입은 영구히 사용 불가다 (KI-11).
+            // If the cache was already initialized before registration (early access), the cctor never saw the Prefill and the CLR will not re-run it —
+            // the cache fields are not readonly, so fill them directly here to recover. Without this step the type would be unusable forever (KI-11).
             if (SerializerCache<T>.Serialize is null)
             {
-                // 필드가 volatile 이라 각 대입은 release store 다 — 이전의 `Volatile.Write(Serialize)` 묶음 발행은
-                // Serialize 를 먼저 읽는 독자에만 유효했고 Deserialize 만 읽는 핫 경로와 짝이 없었다(KI-39).
+                // The fields are volatile, so each assignment is a release store — the previous `Volatile.Write(Serialize)` batch publication
+                // was only valid for readers that read Serialize first, and did not pair with hot paths that read only Deserialize (KI-39).
                 SerializerCache<T>.Deserialize = deserialize;
                 SerializerCache<T>.SerializeBytes = serializeBytes;
                 SerializerCache<T>.DeserializeBytes = deserializeBytes;
@@ -314,14 +315,14 @@ namespace MessageProtocol.Serialize
         }
 
         /// <summary>
-        /// 등록을 발행하기 전에 거부 조건을 검증한다 — 부수효과 없음(디스패치·캐시 어느 쪽도 건드리지 않는다).
-        /// prefill 이 이 검증보다 먼저 돌면 거부된 등록의 MessageId/HasId 가 <see cref="SerializerCache{T}"/> 에
-        /// 영구 잔류한다 (Known-Issues KI-11 잔존). RegisterCore 의 원자적 클레임(TryAdd/GetOrAdd) 은 그대로
-        /// 남아 검증 통과 후 발행 직전의 동시 등록 경쟁을 담당한다.
+        /// Validates rejection conditions before the registration is published — no side effects (touches neither dispatch nor cache).
+        /// If the prefill ran before this validation, the rejected registration's MessageId/HasId would persist in
+        /// <see cref="SerializerCache{T}"/> forever (Known-Issues KI-11 residue). RegisterCore's atomic claims (TryAdd/GetOrAdd) remain in place
+        /// and handle concurrent registration races between validation and publication.
         /// </summary>
         static void ValidateRegistration(Type type, uint messageId, bool hasId, bool typeClaimed = false)
         {
-            // 클레임 선점 등록 경로(KI-38)에서는 이미 이 등록 시도가 타입을 선점했으므로 중복 검사를 건너뛴다.
+            // On the claim-first registration path (KI-38) this registration attempt already claimed the type, so skip the duplicate check.
             if (!typeClaimed && _registeredTypes.ContainsKey(type))
             {
                 throw new InvalidOperationException($"Message type '{type.FullName}' is already registered.");
@@ -350,8 +351,8 @@ namespace MessageProtocol.Serialize
                 return;
             }
 
-            // hasId 등록인데 헤더에 NonId 비트 — 이전에는 id·reader 등록을 조용히 건너뛰어 object 직렬화만 동작하고
-            // 이후 Deserialize(object) 가 원인을 알려주지 않는 KeyNotFoundException 으로 실패했다. 등록 시점에 안내한다.
+            // A hasId registration whose header carries the NonId bit — previously the id/reader registration was silently skipped, leaving only object
+            // serialization working, and Deserialize(object) later failed with a cause-less KeyNotFoundException. Now reported at registration time.
             throw new InvalidOperationException(
                 $"Message type '{type.FullName}' is registered as a HasId message but its MessageId 0x{messageId:X8} carries the NonId flag, so the wire header would embed no message id. " +
                 $"Register NonId messages with '{nameof(RegisterNonIdMessage)}' instead, or compose the id with Standalone/Group flags.");
@@ -359,7 +360,7 @@ namespace MessageProtocol.Serialize
 
         static void RegisterCore(Type type, uint messageId, bool hasId, BufferWriterAction writer, BufferReaderFunc? reader, bool typeClaimed = false)
         {
-            // 클레임은 호출부(델리게이트 경로, KI-38)가 prefill 전에 이미 선점했을 수 있다 — 그 경우 이중 선점은 실패하므로 건너뛴다.
+            // The caller (delegate path, KI-38) may already have claimed the type before the prefill — skip here because a second claim would fail.
             if (!typeClaimed && !_registeredTypes.TryAdd(type, 0))
             {
                 throw new InvalidOperationException($"Message type '{type.FullName}' is already registered.");

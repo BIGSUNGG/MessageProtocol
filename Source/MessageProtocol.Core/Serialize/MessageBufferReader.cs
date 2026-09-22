@@ -8,14 +8,14 @@ using System.Text;
 namespace MessageProtocol.Serialize
 {
     /// <summary>
-    /// Forward-only ReadOnlySpan 기반 버퍼 reader. 경계 초과 읽기는 <see cref="EndOfStreamException"/>.
+    /// Forward-only ReadOnlySpan-based buffer reader. Reads past the end throw <see cref="EndOfStreamException"/>.
     /// </summary>
     public ref struct MessageBufferReader
     {
         /// <summary>
-        /// 기본 중첩 객체 역직렬화 깊이 상한. 불신 피어가 작은 프레임에 깊은 중첩을 담아
-        /// 재귀 스택을 소진시키는 것(스택 오버플로 — catch 불가, 프로세스 즉시 종료)을 막는다 (Known-Issues KI-14).
-        /// <see cref="MessageBufferReader(ReadOnlySpan{byte}, int)"/> 로 reader 단위로 올릴 수 있다.
+        /// Default nesting depth limit for deserialization. Stops an untrusted peer from packing deep nesting into a small
+        /// frame to exhaust the recursion stack (stack overflow — uncatchable, kills the process immediately) (Known-Issues KI-14).
+        /// Can be raised per reader via <see cref="MessageBufferReader(ReadOnlySpan{byte}, int)"/>.
         /// </summary>
         public const int DefaultMaxNestingDepth = 64;
 
@@ -29,10 +29,10 @@ namespace MessageProtocol.Serialize
         {
         }
 
-        /// <param name="buffer">읽을 페이로드 버퍼.</param>
+        /// <param name="buffer">The payload buffer to read.</param>
         /// <param name="maxNestingDepth">
-        /// 중첩 객체 역직렬화 깊이 상한. 합법적으로 깊은 객체 그래프를 다루는 호출자가 상한을 올리는 탈출구이며,
-        /// 값은 스레드 스택 크기(수준당 스택 프레임)보다 작아야 한다. 0 이하 거부.
+        /// Nesting depth limit for deserialization. An escape hatch for callers with legitimately deep object graphs;
+        /// the value must stay below the thread stack size (one stack frame per level). Values of 0 or less are rejected.
         /// </param>
         public MessageBufferReader(ReadOnlySpan<byte> buffer, int maxNestingDepth)
         {
@@ -47,15 +47,16 @@ namespace MessageProtocol.Serialize
         public int Remaining => _buffer.Length - _position;
         public ReadOnlySpan<byte> UnreadSpan => _buffer.Slice(_position);
 
-        /// <summary>이 reader 가 허용하는 중첩 객체 깊이 상한.</summary>
+        /// <summary>Maximum nesting depth this reader allows.</summary>
         public int MaxNestingDepth => _maxNestingDepth;
 
-        /// <summary>현재 중첩 깊이 — <see cref="EnterNestedObject"/>·<see cref="LeaveNestedObject"/> 가 관리한다.</summary>
+        /// <summary>Current nesting depth — managed by <see cref="EnterNestedObject"/> and <see cref="LeaveNestedObject"/>.</summary>
         public int NestingDepth => _depth;
 
         /// <summary>
-        /// 중첩 객체 판독 시작을 알린다. 상한 도달 시 <see cref="InvalidDataException"/> (와이어 내용 불법 —
-        /// 경계 위반 <see cref="EndOfStreamException"/> 과 구분). 생성 코드·<c>DeserializeFromReader</c> 가 재귀 지점에서 호출한다.
+        /// Marks the start of a nested object read. Throws <see cref="InvalidDataException"/> once the limit is reached
+        /// (illegal wire content — distinct from the <see cref="EndOfStreamException"/> boundary violation). Generated code and
+        /// <c>DeserializeFromReader</c> call this at every recursion point.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void EnterNestedObject()
@@ -65,9 +66,9 @@ namespace MessageProtocol.Serialize
         }
 
         /// <summary>
-        /// 중첩 객체 판독 종료를 알린다. 짝이 맞지 않는 호출(판독 중 예외)은 깊이를 부풀리기만 하므로
-        /// 가드는 실패 방향으로 안전하다 — 예외가 난 reader 는 위치가 객체 중간이라 재사용해서는 안 된다.
-        /// 음수로 내려가지 않도록 0 에서 클램프(음수 깊이가 상한을 무력화하는 것 차단).
+        /// Marks the end of a nested object read. An unmatched call (e.g. an exception mid-read) only inflates the depth,
+        /// so the guard fails in the safe direction — a reader that threw is positioned mid-object and must not be reused.
+        /// Clamped at 0 so depth never goes negative (a negative depth would disable the limit).
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void LeaveNestedObject()
@@ -163,7 +164,7 @@ namespace MessageProtocol.Serialize
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public char ReadChar() => (char)ReadUInt16();
 
-        /// <summary>WriteDecimal 의 GetBits 순서(lo, mid, hi, flags) 16바이트를 복원.</summary>
+        /// <summary>Restores the 16 bytes written by WriteDecimal in GetBits order (lo, mid, hi, flags).</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public decimal ReadDecimal()
         {
@@ -173,7 +174,7 @@ namespace MessageProtocol.Serialize
             int mid = BinaryPrimitives.ReadInt32LittleEndian(span.Slice(4));
             int hi = BinaryPrimitives.ReadInt32LittleEndian(span.Slice(8));
             int flags = BinaryPrimitives.ReadInt32LittleEndian(span.Slice(12));
-            // flags 규약: 비트 31 부호, 비트 16–23 스케일(0–28), 나머지는 예약(0). 위반 거부 — 잘못된 스케일은 DecCalc 가감산에서 스택 버퍼 오버플로(프로세스 크래시)를 일으킨다.
+            // flags contract: bit 31 sign, bits 16–23 scale (0–28), the rest reserved (0). Violations are rejected — a bad scale causes a stack buffer overflow in DecCalc arithmetic (process crash).
             uint f = (uint)flags;
             if ((f & 0x7F00FFFFu) != 0 || ((f >> 16) & 0xFFu) > 28u)
             {
@@ -190,7 +191,7 @@ namespace MessageProtocol.Serialize
             return temp[0];
         }
 
-        /// <summary><paramref name="length"/> 바이트 구간을 뷰로 반환하고 전진한다.</summary>
+        /// <summary>Returns a view of the next <paramref name="length"/> bytes and advances the read position.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ReadOnlySpan<byte> ReadBytes(int length)
         {
@@ -200,12 +201,13 @@ namespace MessageProtocol.Serialize
             return span;
         }
 
-        /// <summary>int32 길이 접두 문자열. -1 은 null, 0 은 빈 문자열. 무효 UTF-8 은 와이어 손상으로 거부한다.</summary>
+        /// <summary>Reads an int32 length-prefixed string. -1 means null, 0 means empty. Invalid UTF-8 is rejected as corrupt wire data.</summary>
         public string? ReadString()
         {
             int length = ReadInt32();
             if (length == -1) return null;
-            // null 규약은 -1 뿐이다. 나머지 음수(-2…int.MinValue)는 손상된 길이 접두이므로 null 로 둔갑시켜 조용히 통과시키지 않는다 (Known-Issues KI-6).
+            // The only null contract is -1. Other negative values (-2 … int.MinValue) are corrupt length prefixes and must not be
+            // transmuted into null and silently passed (Known-Issues KI-6).
             if (length < -1)
             {
                 throw new InvalidDataException("String length prefix is negative but not -1.");
@@ -217,18 +219,18 @@ namespace MessageProtocol.Serialize
             }
             catch (DecoderFallbackException exception)
             {
-                // 경계 위반(EndOfStreamException)과 구분해 와이어 내용 불법을 보고 — ReadDecimal KI-15 정책과 동일.
+                // Reports illegal wire content, distinct from a boundary violation (EndOfStreamException) — same policy as ReadDecimal KI-15.
                 throw new InvalidDataException("String payload is not valid UTF-8.", exception);
             }
         }
 
-        // 무효 바이트를 U+FFFD 로 조용히 바꾸면 손상 패킷이 티 없이 복호되므로 엄격 폴백으로 거부한다 (Known-Issues KI-20).
+        // Silently swapping invalid bytes for U+FFFD would let corrupt packets decode without a trace, so a strict fallback rejects them (Known-Issues KI-20).
         static readonly Encoding StrictUtf8 = Encoding.GetEncoding(65001, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Skip(int count)
         {
-            // 음수 Skip 은 위치를 뒤로 돌려 이미 소비한 바이트를 다시 읽게 한다 — forward-only 규약 위반 (Known-Issues KI-21).
+            // A negative Skip rewinds the position, allowing already-consumed bytes to be read again — a forward-only contract violation (Known-Issues KI-21).
             if (count < 0) ThrowNegativeCount(count);
             EnsureRemaining(count);
             _position += count;

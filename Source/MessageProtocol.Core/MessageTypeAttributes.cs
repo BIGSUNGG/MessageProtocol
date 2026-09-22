@@ -16,25 +16,25 @@ namespace MessageProtocol
     }
 
     /// <summary>
-    /// 메시지 선언 속성 — 종류·ID·카테고리의 유일한 진입점.
+    /// Message declaration attribute — the single entry point for kind, ID, and category.
     /// <para>
-    /// <c>Kind</c> 는 <see cref="MessageKind"/> 값대로 종류를 확정하고, <see cref="MessageKind.Automatic"/> 은
-    /// 계층에서 추론한다. <c>Id</c> 를 생략(0)하면 MessageId 는 타입 FullName 의 FNV-1a 해시(24비트,
-    /// <see cref="MessageIdHash"/>)로 결정되고, 명시하면 수동 할당이다(단, 0 은 '생략'을 뜻하므로 수동 0 은 불가).
-    /// 해시 충돌·Child 위치의 해시 0 은 진단 에러로 거부된다. <see cref="MessageKind.NonId"/> 는
-    /// id·category 인자와 함께 쓰면 진단 에러(MSGPROT018)다.
+    /// <c>Kind</c> fixes the kind to the given <see cref="MessageKind"/> value; <see cref="MessageKind.Automatic"/>
+    /// infers it from the hierarchy. Omitting <c>Id</c> (0) derives the MessageId from the FNV-1a hash (24-bit,
+    /// <see cref="MessageIdHash"/>) of the type's FullName; specifying it is a manual assignment (but since 0 means "omitted",
+    /// a manual 0 is not possible). Hash collisions and a hash of 0 in Child position are rejected with diagnostic errors.
+    /// Using <see cref="MessageKind.NonId"/> together with id/category arguments is a diagnostic error (MSGPROT018).
     /// </para>
     /// </summary>
     [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct | AttributeTargets.Interface, AllowMultiple = false, Inherited = false)]
     public class MessageAttribute : Attribute
     {
-        /// <summary>메시지 종류. 기본 Automatic(계층 추론).</summary>
+        /// <summary>Message kind. Defaults to Automatic (inferred from the hierarchy).</summary>
         public MessageKind Kind { get; }
 
-        /// <summary>수동 MessageId. 0(생략)이면 FullName 해시로 결정된다.</summary>
+        /// <summary>Manual MessageId. When 0 (omitted), it is derived from the FullName hash.</summary>
         public uint Id { get; }
 
-        /// <summary>헤더 하위 니블(0~15). 기본 Category0. NonId 에서는 사용 불가.</summary>
+        /// <summary>Lower nibble of the header (0–15). Defaults to Category0. Not usable with NonId.</summary>
         public MessageCategory Category { get; }
 
         public MessageAttribute(
@@ -50,10 +50,11 @@ namespace MessageProtocol
     }
 
     /// <summary>
-    /// 제네릭 메시지의 직렬화 지원 구성(닫힌 제네릭) 선언. 선언부·캐리어 등 임의의 타입 선언에
-    /// 구성마다 반복 부착한다: <c>[GenericMessage(typeof(Envelope&lt;Ping&gt;), ClassId = 1)]</c>.
-    /// 선언된 구성은 생성 코드가 (MessageId, ClassId) 키로 모듈 로드 시 자동 등록해 송수신 양쪽에서
-    /// object dispatch 가 동작한다. 구성 미선언 제네릭 메시지의 직렬화는 예외.
+    /// Declares serialization-supported constructions (closed generics) of a generic message. Attach repeatedly, one per
+    /// construction, on any type declaration such as the declaration itself or a carrier:
+    /// <c>[GenericMessage(typeof(Envelope&lt;Ping&gt;), ClassId = 1)]</c>.
+    /// Generated code auto-registers declared constructions under their (MessageId, ClassId) key at module load, making
+    /// object dispatch work on both the sending and receiving sides. Serializing an undeclared construction throws.
     /// </summary>
     [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = true, Inherited = false)]
     public class GenericMessageAttribute : Attribute
@@ -62,7 +63,7 @@ namespace MessageProtocol
 
         uint _classId;
 
-        /// <summary>구성 클래스 식별자. 헤더의 MessageId 뒤에 3바이트로 기록된다. 1 .. 2^24-1.</summary>
+        /// <summary>Construction class identifier. Written as 3 bytes after the header MessageId. Range 1 .. 2^24-1.</summary>
         public uint ClassId
         {
             get => _classId;

@@ -2,8 +2,8 @@ using MessageProtocol;
 using MessageProtocol.Serialize;
 using SandboxMessages;
 
-// Sandbox 인수 조건: Feature-Spec F1–F7 을 실행으로 검증한다.
-// 실패 시 0 이 아닌 종료 코드.
+// Sandbox acceptance conditions: verifies Feature-Spec F1–F7 by execution.
+// Exits with a non-zero code on failure.
 
 int failures = 0;
 
@@ -13,7 +13,7 @@ void Check(string name, bool condition)
     if (!condition) failures++;
 }
 
-// ---------- S1: Standalone + 전체 멤버 타입 round-trip ----------
+// ---------- S1: Standalone + all member types round-trip ----------
 {
     var msg = new AllPrimitives
     {
@@ -29,6 +29,7 @@ void Check(string name, bool condition)
         Single = 3.14f,
         Double = -2.71828,
         Decimal = 12345.6789m,
+        // intentional non-ASCII payload: exercises UTF-8 round-trip
         Char = '한',
         Text = "메시지 프로토콜",
         Color = Color.Green,
@@ -37,7 +38,7 @@ void Check(string name, bool condition)
     byte[] bytes = MessageSerializer.Serialize(msg);
     var roundTrip = MessageSerializer.Deserialize<AllPrimitives>(bytes);
 
-    Check("S1 round-trip 값 동일",
+    Check("S1 round-trip values are equal",
         roundTrip.Bool == msg.Bool && roundTrip.Byte == msg.Byte && roundTrip.SByte == msg.SByte &&
         roundTrip.Int16 == msg.Int16 && roundTrip.UInt16 == msg.UInt16 &&
         roundTrip.Int32 == msg.Int32 && roundTrip.UInt32 == msg.UInt32 &&
@@ -46,47 +47,47 @@ void Check(string name, bool condition)
         roundTrip.Decimal == msg.Decimal && roundTrip.Char == msg.Char &&
         roundTrip.Text == msg.Text && roundTrip.Color == msg.Color);
 
-    // 헤더: flags=Standalone(상위 니블) + category=3(하위 니블)
+    // Header: flags=Standalone (high nibble) + category=3 (low nibble)
     byte expectedHeader = MessageWireFormat.ComposeHeaderByte(MessageFlag.Standalone, 3);
-    Check("S1 헤더 바이트", bytes[0] == expectedHeader);
+    Check("S1 header byte", bytes[0] == expectedHeader);
 
     uint expectedId = MessageWireFormat.ComposeMessageId(MessageFlag.Standalone, 3, 1);
-    Check("S1 MessageId 조립", AllPrimitives.MessageId == expectedId);
+    Check("S1 MessageId composition", AllPrimitives.MessageId == expectedId);
 
-    // null / 빈 문자열
+    // null / empty strings
     var nullText = new AllPrimitives { Text = null };
     var emptyText = new AllPrimitives { Text = string.Empty };
-    Check("S1 null 문자열", MessageSerializer.Deserialize<AllPrimitives>(MessageSerializer.Serialize(nullText)).Text == null);
-    Check("S1 빈 문자열", MessageSerializer.Deserialize<AllPrimitives>(MessageSerializer.Serialize(emptyText)).Text == string.Empty);
+    Check("S1 null string", MessageSerializer.Deserialize<AllPrimitives>(MessageSerializer.Serialize(nullText)).Text == null);
+    Check("S1 empty string", MessageSerializer.Deserialize<AllPrimitives>(MessageSerializer.Serialize(emptyText)).Text == string.Empty);
 }
 
 // ---------- S2: NonId ----------
 {
     var ping = new Ping { Seq = 42 };
     byte[] bytes = MessageSerializer.Serialize(ping);
-    Check("S2 NonId 헤더 1바이트", bytes[0] == MessageWireFormat.ComposeHeaderByte(MessageFlag.NonIdMessage, 0) && bytes.Length == 5);
+    Check("S2 NonId header is 1 byte", bytes[0] == MessageWireFormat.ComposeHeaderByte(MessageFlag.NonIdMessage, 0) && bytes.Length == 5);
     Check("S2 round-trip", MessageSerializer.Deserialize<Ping>(bytes).Seq == 42);
 
     bool rejected = false;
     try { MessageSerializer.Deserialize(bytes); }
-    catch (System.IO.InvalidDataException) { rejected = true; }   // 와이어 내용 불법 → InvalidDataException(2026-09-08, 퍼저 계기 교정)
-    Check("S2 object Deserialize는 NonId 거부", rejected);
+    catch (System.IO.InvalidDataException) { rejected = true; }   // illegal wire content → InvalidDataException (2026-09-08, corrected after a fuzzer finding)
+    Check("S2 object Deserialize rejects NonId", rejected);
 }
 
-// ---------- S3: 그룹 + object dispatch ----------
+// ---------- S3: Group + object dispatch ----------
 {
     var circle = new Circle { Name = "c1", Radius = 2.5 };
     byte[] bytes = MessageSerializer.Serialize((object)circle);
     object? decoded = MessageSerializer.Deserialize(bytes);
 
-    Check("S3 object dispatch가 요소 타입 복원",
+    Check("S3 object dispatch restores the element type",
         decoded is Circle c && c.Name == "c1" && c.Radius == 2.5);
 
     byte header = bytes[0];
-    Check("S3 요소 헤더 플래그", MessageWireFormat.GetFlags(header) == MessageFlag.Child);
+    Check("S3 element header flags", MessageWireFormat.GetFlags(header) == MessageFlag.Child);
 }
 
-// ---------- S4: 컬렉션 ----------
+// ---------- S4: Collections ----------
 {
     var msg = new Collections
     {
@@ -99,22 +100,22 @@ void Check(string name, bool condition)
 
     var rt = MessageSerializer.Deserialize<Collections>(MessageSerializer.Serialize(msg));
     Check("S4 byte[] round-trip", rt.Bytes != null && rt.Bytes.SequenceEqual(new byte[] { 1, 2, 3 }));
-    Check("S4 null 배열", rt.Ints == null);
+    Check("S4 null array", rt.Ints == null);
     Check("S4 List<string> round-trip", rt.Names != null && rt.Names.Count == 3 && rt.Names[0] == "a" && rt.Names[1] == "b");
-    Check("S4 List<중첩 메시지>", rt.Items != null && rt.Items.Count == 1 && rt.Items[0].Int32 == 7 && rt.Items[0].Text == "x");
+    Check("S4 List<nested messages>", rt.Items != null && rt.Items.Count == 1 && rt.Items[0].Int32 == 7 && rt.Items[0].Text == "x");
     Check("S4 IList<int>", rt.View != null && rt.View.Count == 2 && rt.View[1] == 20);
 }
 
-// ---------- S5: 순환·공유 참조 ----------
+// ---------- S5: Cyclic and shared references ----------
 {
     var node = new TreeNode { Label = "root", Poco = new NestedPoco { X = 9, Tag = "t" } };
-    node.Left = node;               // 자기 참조 → 백레퍼런스
-    node.Right = node.Left;         // 공유 참조
+    node.Left = node;               // self-reference → back-reference
+    node.Right = node.Left;         // shared reference
 
     var rt = MessageSerializer.Deserialize<TreeNode>(MessageSerializer.Serialize(node));
-    Check("S5 자기 참조 복원", ReferenceEquals(rt.Left, rt));
-    Check("S5 공유 참조 복원", ReferenceEquals(rt.Right, rt.Left));
-    Check("S5 중첩 POCO 복원", rt.Poco != null && rt.Poco.X == 9 && rt.Poco.Tag == "t");
+    Check("S5 self-reference restored", ReferenceEquals(rt.Left, rt));
+    Check("S5 shared reference restored", ReferenceEquals(rt.Right, rt.Left));
+    Check("S5 nested POCO restored", rt.Poco != null && rt.Poco.X == 9 && rt.Poco.Tag == "t");
 }
 
 // ---------- S6: MessageIgnore / MessageInclude ----------
@@ -123,22 +124,22 @@ void Check(string name, bool condition)
     msg.SetHidden(7);
 
     var rt = MessageSerializer.Deserialize<MemberControl>(MessageSerializer.Serialize(msg));
-    Check("S6 일반 멤버 유지", rt.Kept == 1);
-    Check("S6 MessageIgnore 제외", rt.Skipped == 0);
-    Check("S6 MessageInclude 포함", rt.GetHidden() == 7);
+    Check("S6 regular member kept", rt.Kept == 1);
+    Check("S6 MessageIgnore excluded", rt.Skipped == 0);
+    Check("S6 MessageInclude included", rt.GetHidden() == 7);
 }
 
-// ---------- S7: 다형성 Serialize(object) ----------
+// ---------- S7: Polymorphic Serialize(object) ----------
 {
     ShapeRoot shape = new Circle { Name = "poly", Radius = 1.0 };
-    byte[] bytes = MessageSerializer.Serialize((object)shape);   // 런타임 타입 직렬화
+    byte[] bytes = MessageSerializer.Serialize((object)shape);   // serializes by runtime type
     object? decoded = MessageSerializer.Deserialize(bytes);
-    Check("S7 파생 타입 직렬화", decoded is Circle pc && pc.Name == "poly" && pc.Radius == 1.0);
+    Check("S7 derived type serialized", decoded is Circle pc && pc.Name == "poly" && pc.Radius == 1.0);
 
-    // 루트 자체도 등록·라우팅 가능
+    // the root type itself is also registered and routable
     var root = new ShapeRoot { Name = "root" };
     var rt = MessageSerializer.Deserialize(MessageSerializer.Serialize((object)root));
-    Check("S7 루트 타입 라우팅", rt is ShapeRoot sr && sr.Name == "root");
+    Check("S7 root type routed", rt is ShapeRoot sr && sr.Name == "root");
 }
 
 // ---------- S8: PooledBuffer ----------
@@ -147,28 +148,28 @@ void Check(string name, bool condition)
     using (var pooled = MessageSerializer.SerializePooled(msg))
     {
         byte[] compat = MessageSerializer.Serialize(msg);
-        Check("S8 pooled == byte[] 경로", pooled.Span.SequenceEqual(compat));
-        pooled.Dispose(); // 멱등 Dispose
-        Check("S8 Dispose 멱등", pooled.Length == 0);
+        Check("S8 pooled == byte[] path", pooled.Span.SequenceEqual(compat));
+        pooled.Dispose(); // Dispose is idempotent
+        Check("S8 Dispose is idempotent", pooled.Length == 0);
     }
 }
 
-// ---------- S9: 수동 구현 + RegisterType ----------
+// ---------- S9: Manual implementation + RegisterType ----------
 {
     MessageSerializer.RegisterType(typeof(ManualMessage));
 
     var msg = new ManualMessage { Value = 1234 };
-    byte[] bytes = MessageSerializer.Serialize(msg);      // 제네릭 경로
-    Check("S9 수동 메시지 제네릭 round-trip", MessageSerializer.Deserialize<ManualMessage>(bytes).Value == 1234);
+    byte[] bytes = MessageSerializer.Serialize(msg);      // generic path
+    Check("S9 manual message generic round-trip", MessageSerializer.Deserialize<ManualMessage>(bytes).Value == 1234);
 
-    object? decoded = MessageSerializer.Deserialize(bytes); // ID 라우팅
-    Check("S9 수동 메시지 object dispatch", decoded is ManualMessage m && m.Value == 1234);
+    object? decoded = MessageSerializer.Deserialize(bytes); // routed by ID
+    Check("S9 manual message object dispatch", decoded is ManualMessage m && m.Value == 1234);
 }
 
-// ---------- S10: 제네릭 메시지 ----------
+// ---------- S10: Generic message ----------
 {
-    // T 에는 object dispatch 가능한 ID 메시지(여기선 AllPrimitives)를 담는다.
-    // NonId 메시지는 규격상 디스패치 대상이 아니라 T 구성으로 라우팅할 수 없다.
+    // T holds an ID message that supports object dispatch (AllPrimitives here).
+    // NonId messages carry no ID, so the wire spec cannot route them through a generic-T construction.
     var msg = new Envelope<AllPrimitives>
     {
         Note = "gen",
@@ -177,41 +178,41 @@ void Check(string name, bool condition)
     };
 
     var rt = MessageSerializer.Deserialize<Envelope<AllPrimitives>>(MessageSerializer.Serialize(msg));
-    Check("S10 제네릭 round-trip", rt.Note == "gen" && rt.Value != null && rt.Value.Int32 == 7 && rt.Value.Text == "t");
-    Check("S10 T 컬렉션 round-trip", rt.Items != null && rt.Items.Count == 3 && rt.Items[0]!.Int32 == 1 && rt.Items[1] == null && rt.Items[2]!.Int32 == 2);
+    Check("S10 generic round-trip", rt.Note == "gen" && rt.Value != null && rt.Value.Int32 == 7 && rt.Value.Text == "t");
+    Check("S10 T collection round-trip", rt.Items != null && rt.Items.Count == 3 && rt.Items[0]!.Int32 == 1 && rt.Items[1] == null && rt.Items[2]!.Int32 == 2);
 
-    // 닫힌 구성은 선언 기반 자동 등록으로 object dispatch 가능 (수동 등록 없음)
+    // Closed constructions support object dispatch via declaration-based auto-registration (no manual RegisterType).
     object? decodedGeneric = MessageSerializer.Deserialize(MessageSerializer.Serialize((object)msg));
-    Check("S10 제네릭 object dispatch", decodedGeneric is Envelope<AllPrimitives> env && env.Value!.Int32 == 7);
+    Check("S10 generic object dispatch", decodedGeneric is Envelope<AllPrimitives> env && env.Value!.Int32 == 7);
 }
 
-// ---------- S11: 제네릭 구성 공존·와이어 헤더 ----------
+// ---------- S11: Generic construction coexistence + wire header ----------
 {
     var a = new Envelope<AllPrimitives> { Value = new AllPrimitives { Int32 = 1 } };
     var b = new Envelope<Circle> { Value = new Circle { Name = "c", Radius = 2.0 } };
 
     byte[] bytesA = MessageSerializer.Serialize(a);
-    Check("S11 제네릭 헤더 플래그 0", MessageWireFormat.GetFlags(bytesA[0]) == MessageFlag.Generic);
-    Check("S11 클래스 ID 기록", bytesA[4] == 0 && bytesA[5] == 0 && bytesA[6] == 1);
+    Check("S11 generic header flags are 0", MessageWireFormat.GetFlags(bytesA[0]) == MessageFlag.Generic);
+    Check("S11 class id bytes written", bytesA[4] == 0 && bytesA[5] == 0 && bytesA[6] == 1);
 
     object? da = MessageSerializer.Deserialize(bytesA);
     object? db = MessageSerializer.Deserialize(MessageSerializer.Serialize((object)b));
-    Check("S11 구성 공존 A", da is Envelope<AllPrimitives> ea && ea.Value!.Int32 == 1);
-    Check("S11 구성 공존 B", db is Envelope<Circle> ec && ec.Value!.Radius == 2.0);
+    Check("S11 construction coexistence A", da is Envelope<AllPrimitives> ea && ea.Value!.Int32 == 1);
+    Check("S11 construction coexistence B", db is Envelope<Circle> ec && ec.Value!.Radius == 2.0);
 }
 
-// ---------- S12: 분산 선언 구성 ----------
+// ---------- S12: Distributed-declaration construction ----------
 {
-    // Envelope<T> 선언부가 아닌 별도 캐리어(Constructions.cs)로 선언한 구성.
+    // A construction declared via a separate carrier (Constructions.cs), not in the Envelope<T> declaration.
     var msg = new Envelope<TreeNode> { Value = new TreeNode { Label = "dist" } };
     object? decoded = MessageSerializer.Deserialize(MessageSerializer.Serialize((object)msg));
-    Check("S12 분산 선언 구성 dispatch", decoded is Envelope<TreeNode> env && env.Value!.Label == "dist");
+    Check("S12 distributed-declaration construction dispatch", decoded is Envelope<TreeNode> env && env.Value!.Label == "dist");
 }
 
-// ---------- S13: 추상 그룹 루트 다형 멤버 ----------
+// ---------- S13: Abstract group root with polymorphic member ----------
 {
-    // abstract [Message(MessageKind.Parent)] 멤버는 런타임 메시지 디스패치로 구체 요소가 기록된다 —
-    // 선언 타입(추상 루트)이 아니라 실제 요소 타입과 파생 멤버가 복원되어야 한다.
+    // An abstract [Message(MessageKind.Parent)] member is written via runtime message dispatch, which records the
+    // concrete element — the actual element type and its derived members must be restored, not the declared abstract root.
     var batch = new CommandBatch
     {
         Head = new DrawCommand { Seq = 1, Layer = "bg" },
@@ -224,19 +225,19 @@ void Check(string name, bool condition)
 
     var roundTrip = MessageSerializer.Deserialize<CommandBatch>(MessageSerializer.Serialize(batch));
 
-    Check("S13 추상 루트 멤버 구체 타입 복원",
+    Check("S13 abstract root member restores the concrete type",
         roundTrip.Head is DrawCommand head && head.Layer == "bg" && head.Seq == 1);
-    Check("S13 추상 루트 컬렉션 다형 복원",
+    Check("S13 abstract root collection restores polymorphic items",
         roundTrip.Queue is { Count: 2 }
         && roundTrip.Queue[0] is ClearCommand clear && clear.Full && clear.Seq == 2
         && roundTrip.Queue[1] is DrawCommand tail && tail.Layer == "fg");
-    Check("S13 추상 루트 멤버 null 왕복",
+    Check("S13 abstract root member null round-trip",
         MessageSerializer.Deserialize<CommandBatch>(MessageSerializer.Serialize(new CommandBatch())).Head is null);
 }
 
-// ---------- S14: 신뢰 경계 거부 (KI-5 헤더 검증·KI-36 참조 태그 검증) ----------
+// ---------- S14: Trust-boundary rejection (KI-5 header validation, KI-36 reference tag validation) ----------
 {
-    // 불신 프레임은 조용히 재해석되지 않고 진입에서 안내 예외로 거부되어야 한다.
+    // Untrusted frames must be rejected at the entry point with a descriptive exception — never silently reinterpreted.
     string? Capture(Action action)
     {
         try { action(); return null; }
@@ -247,49 +248,49 @@ void Check(string name, bool condition)
         Capture(action) is { } rejection && rejection.Contains(expected);
 
     var foreignBytes = MessageSerializer.Serialize(new Collections { });
-    Check("S14 다른 타입 바이트는 헤더에서 거부",
+    Check("S14 bytes of another type are rejected at the header",
         RejectsWith(() => MessageSerializer.Deserialize<AllPrimitives>(foreignBytes), "does not match AllPrimitives"));
 
     var forged = MessageSerializer.Serialize(new AllPrimitives { });
-    forged[0] = 0xFF;   // NonId 플래그 주장 — 4바이트 읽기 우회 시도
-    Check("S14 위조 NonId 헤더는 거부",
+    forged[0] = 0xFF;   // claims the NonId flag — attempts to bypass the 4-byte read
+    Check("S14 forged NonId header is rejected",
         RejectsWith(() => MessageSerializer.Deserialize<AllPrimitives>(forged), "does not match AllPrimitives"));
 
     var batch = MessageSerializer.Serialize(new CommandBatch
     {
         Head = new DrawCommand { Seq = 1, Layer = "bg" },
     });
-    batch[4] = 3;   // 첫 참조 멤버(Head)의 ReferenceKind 태그를 규격 밖 값으로
-    Check("S14 알수없는 참조 태그는 즉시 거부",
+    batch[4] = 3;   // sets the ReferenceKind tag of the first reference member (Head) to an out-of-spec value
+    Check("S14 unknown reference tag is rejected immediately",
         RejectsWith(() => MessageSerializer.Deserialize<CommandBatch>(batch), "Unknown reference kind 3"));
 }
 
-// ---------- S15: [Message] 자동 선언 (종류 추론·FullName 해시 ID) ----------
+// ---------- S15: Automatic [Message] declaration (kind inference, FullName hash IDs) ----------
 {
-    // 독립 추론: 종류·ID 없이 선언만으로 Standalone 등록.
-    var note = new AutoNote { Text = "자동" };
+    // Standalone inference: registered as Standalone from the declaration alone — no kind or ID given.
+    var note = new AutoNote { Text = "자동" }; // intentional non-ASCII payload: exercises UTF-8 round-trip
     var rtNote = MessageSerializer.Deserialize<AutoNote>(MessageSerializer.Serialize(note));
-    Check("S15 Standalone 추론 round-trip", rtNote.Text == "자동");
+    Check("S15 Standalone inferred round-trip", rtNote.Text == "자동");
 
     uint noteHash = MessageIdHash.FromFullName(typeof(AutoNote).FullName!);
-    Check("S15 Standalone MessageId = FullName 해시",
+    Check("S15 Standalone MessageId = FullName hash",
         AutoNote.MessageId == MessageWireFormat.ComposeMessageId(MessageFlag.Standalone, 0, noteHash));
 
-    // 그룹 추론: 파생 존재 → 루트, 조상 상속 → 요소. object dispatch 로 요소별 복원.
+    // Group inference: derivatives exist → root; ancestor inheritance → element. Each element is restored via object dispatch.
     var join = new AutoJoin { Timestamp = 123L, PlayerId = 7 };
     var leave = new AutoLeave { Timestamp = 456L, Reason = "quit" };
 
     var dJoin = MessageSerializer.Deserialize(MessageSerializer.Serialize((object)join));
     var dLeave = MessageSerializer.Deserialize(MessageSerializer.Serialize((object)leave));
 
-    Check("S15 GroupElement 추론 dispatch",
+    Check("S15 GroupElement inferred dispatch",
         dJoin is AutoJoin j && j.Timestamp == 123L && j.PlayerId == 7
         && dLeave is AutoLeave l && l.Timestamp == 456L && l.Reason == "quit");
 
-    // 와이어 검증: 헤더 플래그는 GroupElement 니블, ID 3바이트는 해시 빅엔디언.
+    // Wire check: header flag is the GroupElement nibble; the 3 ID bytes are the hash in big-endian.
     uint joinHash = MessageIdHash.FromFullName(typeof(AutoJoin).FullName!);
     var joinBytes = MessageSerializer.Serialize((object)join);
-    Check("S15 요소 헤더 플래그·해시 ID 바이트",
+    Check("S15 element header flags and hashed id bytes",
         MessageWireFormat.GetFlags(joinBytes[0]) == MessageFlag.Child
         && joinBytes[1] == (byte)(joinHash >> 16)
         && joinBytes[2] == (byte)(joinHash >> 8)

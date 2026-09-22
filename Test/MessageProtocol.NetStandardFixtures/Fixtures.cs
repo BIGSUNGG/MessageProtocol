@@ -2,12 +2,12 @@ using MessageProtocol;
 
 namespace MessageProtocol.NetStandardFixtures;
 
-// 이 어셈블리는 netstandard2.1(Unity 호환 프로필)로 컴파일된다 — CollectionsMarshal 이 없어
-// 생성기는 List<T> 고속 경로(AsSpan/SetCount) 대신 폴백 변형(인덱서 루프)을 방출한다.
-// KI-17(폴백 벌크 가드)·KI-26(멤버 스냅샷)·KI-14/25(중첩 깊이 가드)의 생성 코드가
-// 실제로 실행되는 유일한 곳이므로, 이 픽스처들은 소비자 환경의 와이어 행동을 고정한다.
+// This assembly compiles against netstandard2.1 (the Unity-compatible profile). It has no CollectionsMarshal, so
+// the generator emits the fallback variant (indexer loop) instead of the fast List<T> path (AsSpan/SetCount).
+// This is the only place where the generated code for KI-17 (fallback bulk guard), KI-26 (member snapshot), and
+// KI-14/25 (nesting-depth guard) actually executes, so these fixtures pin the wire behavior consumers see there.
 
-/// <summary>폴백 컬렉션 경로 5형태: List(고정 크기)·List(가변 크기)·IList·배열(가변)·배열(고정 크기).</summary>
+/// <summary>The 5 fallback collection path shapes: List (fixed size), List (variable size), IList, array (variable), array (fixed size).</summary>
 [Message(MessageKind.Standalone, 900)]
 public partial class FallbackCollections
 {
@@ -18,7 +18,7 @@ public partial class FallbackCollections
     public double[]? Samples { get; set; }
 }
 
-/// <summary>자기참조 + 중첩 컬렉션을 가진 NonId 페이로드 — 중첩 깊이 가드가 폴백 경로에서도 도는지 검증한다.</summary>
+/// <summary>A NonId payload with self-reference and nested collections — verifies the nesting-depth guard also runs on the fallback path.</summary>
 [Message(MessageKind.NonId)]
 public partial class FallbackNode
 {
@@ -28,8 +28,9 @@ public partial class FallbackNode
 }
 
 /// <summary>
-/// 크로스 어셈블리 파생 검증용 [Message] 루트 후보 — 이 어셈블리(netstandard2.1)에는 파생이 없어 Standalone 으로
-/// 확정된다. MessageProtocol.Tests 에서 [Message] 파생 요소를 만들면 참조 어셈블리 너머 상속 인식을 증명한다.
+/// A [Message] root candidate for cross-assembly inheritance checks — this assembly (netstandard2.1) has no
+/// derivatives, so it resolves as Standalone here. When MessageProtocol.Tests declares a [Message]-derived element,
+/// inheritance is proven to be recognized across the referenced assembly.
 /// </summary>
 [Message]
 public partial class CrossProjectRoot

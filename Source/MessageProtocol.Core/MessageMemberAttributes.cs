@@ -2,13 +2,13 @@ using System;
 
 namespace MessageProtocol
 {
-    /// <summary>직렬화 대상 멤버에서 제외한다.</summary>
+    /// <summary>Excludes the member from serialization.</summary>
     [AttributeUsage(AttributeTargets.Field | AttributeTargets.Property, AllowMultiple = false, Inherited = false)]
     public class MessageIgnoreAttribute : Attribute
     {
     }
 
-    /// <summary>public 이 아닌 멤버를 직렬화 대상에 포함한다.</summary>
+    /// <summary>Includes a non-public member in serialization.</summary>
     [AttributeUsage(AttributeTargets.Field | AttributeTargets.Property, AllowMultiple = false, Inherited = false)]
     public class MessageIncludeAttribute : Attribute
     {

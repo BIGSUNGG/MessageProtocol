@@ -6,10 +6,12 @@ using Xunit;
 namespace MessageProtocol.Tests;
 
 /// <summary>
-/// 경계값 왕복 정밀 검증 — 값 동일성(==) 이 지나치는 무음 손상 클래스를 잡는다:
-///  -0.0 과 +0.0 은 == 로 같다 — 부호 있는 0의 유실은 **비트 비교로만** 관찰된다.
-/// NaN 은 페이로드를 가진다 — quiet/signaling 구분과 페이로드 비트가 와이어에서 보존되어야 한다.
-/// (와이어는 원시 비트 복사다 — 이 테스트는 그 사실을 계약으로 못박는다. 전환·정규화가 끼어들면 즉시 깨진다.)
+/// Precision checks for edge-value round trips — catches silent-corruption classes that value equality (==)
+/// lets slip through:
+///  -0.0 and +0.0 compare equal with == — loss of a signed zero is observable **only via bit comparison**.
+///  NaNs carry payloads — the quiet/signaling distinction and payload bits must survive the wire.
+///  (The wire is raw bit copy; these tests pin that fact as a contract. Any conversion/normalization sneaking
+///  in breaks them immediately.)
 /// </summary>
 public class EdgeValueRoundTripTests
 {
@@ -19,18 +21,18 @@ public class EdgeValueRoundTripTests
     public static TheoryData<uint> FloatPatterns => new()
     {
         0x00000000u,             // +0.0
-        0x80000000u,             // -0.0 (부호 있는 0 — == 로는 +0.0 과 구분 불가)
+        0x80000000u,             // -0.0 (signed zero — indistinguishable from +0.0 via ==)
         0x3F800000u,             // 1.0
         0x7F800000u,             // +Infinity
         0xFF800000u,             // -Infinity
-        0x7FC00000u,             // quiet NaN (기본 페이로드)
-        0xFFC00001u,             // quiet NaN (음수·페이로드 1)
+        0x7FC00000u,             // quiet NaN (default payload)
+        0xFFC00001u,             // quiet NaN (negative, payload 1)
         0x7F800001u,             // signaling NaN
-        0x00000001u,             // 최소 denormal
-        0x007FFFFFu,             // 최대 denormal
+        0x00000001u,             // smallest denormal
+        0x007FFFFFu,             // largest denormal
         0x7F7FFFFFu,             // float.MaxValue
         0xFF7FFFFFu,             // -float.MaxValue
-        0x00800000u,             // 최소 normal
+        0x00800000u,             // smallest normal
     };
 
     public static TheoryData<ulong> DoublePatterns => new()
@@ -41,17 +43,17 @@ public class EdgeValueRoundTripTests
         0x7FF0000000000000ul,    // +Infinity
         0xFFF0000000000000ul,    // -Infinity
         0x7FF8000000000000ul,    // quiet NaN
-        0xFFF8000000000042ul,    // quiet NaN (음수·페이로드)
+        0xFFF8000000000042ul,    // quiet NaN (negative, payload)
         0x7FF0000000000001ul,    // signaling NaN
-        0x0000000000000001ul,    // 최소 denormal
-        0x000FFFFFFFFFFFFFul,    // 최대 denormal
+        0x0000000000000001ul,    // smallest denormal
+        0x000FFFFFFFFFFFFFul,    // largest denormal
         0x7FEFFFFFFFFFFFFFul,    // double.MaxValue
         0xFFEFFFFFFFFFFFFFul,    // -double.MaxValue
     };
 
     [Theory]
     [MemberData(nameof(FloatPatterns))]
-    public void float_특수_비트패턴은_비트까지_보존된다(uint bits)
+    public void float_special_bit_patterns_are_preserved_down_to_the_bit(uint bits)
     {
         var message = new AllTypesMessage { Single = F(bits) };
 
@@ -62,7 +64,7 @@ public class EdgeValueRoundTripTests
 
     [Theory]
     [MemberData(nameof(DoublePatterns))]
-    public void double_특수_비트패턴은_비트까지_보존된다(ulong bits)
+    public void double_special_bit_patterns_are_preserved_down_to_the_bit(ulong bits)
     {
         var message = new AllTypesMessage { Double = D(bits) };
 
@@ -78,35 +80,37 @@ public class EdgeValueRoundTripTests
         decimal.MinValue,
         decimal.One,
         decimal.MinusOne,
-        0.0000000000000000000000000001m,           // scale 28 최소 양수 (허용 상한)
+        0.0000000000000000000000000001m,           // smallest positive at scale 28 (allowed maximum)
         -0.0000000000000000000000000001m,
-        792281625142643375935439503.35m,           // 최대 유효숫자×scale 조합
-        1.0000000000000000000000000000m,           // 후행 0 스케일 보존 (값은 같아도 bits 다름 가능)
+        792281625142643375935439503.35m,           // largest significand×scale combination
+        1.0000000000000000000000000000m,           // trailing-zero scale preserved (same value, possibly different bits)
     };
 
     [Theory]
     [MemberData(nameof(DecimalPatterns))]
-    public void decimal_경계값은_스케일까지_보존된다(decimal value)
+    public void decimal_edge_values_are_preserved_including_scale(decimal value)
     {
         var message = new AllTypesMessage { Decimal = value };
 
         var roundTrip = MessageSerializer.Deserialize<AllTypesMessage>(MessageSerializer.Serialize(message));
 
-        // decimal.Equals 는 스케일까지 비교한다(1.0 vs 1.00 구분) — GetBits 왕복도 함께 고정.
+        // decimal.Equals compares scale too (1.0 vs 1.00 are distinct) — pin the GetBits round trip as well.
         Assert.Equal(decimal.GetBits(value), decimal.GetBits(roundTrip.Decimal));
     }
 
     public static TheoryData<char, string?> CharStringPatterns => new()
     {
-        { '\0', "nul 포함 \0 문자열" },            // 문자열 내 NUL
-        { '한', "한글 및 surrogate pair: 𝄞 🎮" },   // BMP + BMP 밖(서로게이트 쌍)
-        { char.MaxValue, "max" },                  // U+FFFF (noncharacter — UTF-8 인코딩 가능)
-        { '\uD7FF', "마지막 BMP-before-surrogates" }, // 서로게이트 블록 바로 아래
+        // The string values are intentional non-ASCII/boundary payloads: they exercise UTF-8 encoding,
+        // NUL bytes, surrogate pairs, and noncharacters on the wire — keep them as-is.
+        { '\0', "nul 포함 \0 문자열" },            // NUL inside a string
+        { '한', "한글 및 surrogate pair: 𝄞 🎮" },   // BMP + outside BMP (surrogate pair)
+        { char.MaxValue, "max" },                  // U+FFFF (noncharacter — encodable in UTF-8)
+        { '\uD7FF', "마지막 BMP-before-surrogates" }, // just below the surrogate block
     };
 
     [Theory]
     [MemberData(nameof(CharStringPatterns))]
-    public void char_및_문자열_경계값은_왕복한다(char value, string text)
+    public void char_and_string_edge_values_round_trip(char value, string text)
     {
         var message = new AllTypesMessage { Char = value, Text = text };
 
@@ -117,9 +121,9 @@ public class EdgeValueRoundTripTests
     }
 
     [Fact]
-    public void 음수_0은_양수_0과_구분되어_보존된다()
+    public void negative_zero_is_preserved_distinct_from_positive_zero()
     {
-        // == 로는 같아서 일반 왕복 테스트가 못 잡는 클래스 — 명시적 고정.
+        // Equal under ==, so ordinary round-trip tests cannot catch this class — pinned explicitly.
         var message = new AllTypesMessage { Single = -0.0f, Double = -0.0 };
 
         var roundTrip = MessageSerializer.Deserialize<AllTypesMessage>(MessageSerializer.Serialize(message));

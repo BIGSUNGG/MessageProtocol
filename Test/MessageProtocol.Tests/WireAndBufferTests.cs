@@ -8,7 +8,7 @@ namespace MessageProtocol.Tests;
 public class WireFormatTests
 {
     [Fact]
-    public void 헤더는_flags_상위니블과_category_하위니블로_구성된다()
+    public void header_is_composed_of_flags_high_nibble_and_category_low_nibble()
     {
         byte header = MessageWireFormat.ComposeHeaderByte(MessageFlag.Standalone, 5);
         Assert.Equal(0x25, header);
@@ -17,14 +17,14 @@ public class WireFormatTests
     }
 
     [Fact]
-    public void MessageId는_헤더바이트와_24비트_값으로_조립된다()
+    public void message_id_is_composed_from_header_byte_and_24bit_value()
     {
         uint id = MessageWireFormat.ComposeMessageId(MessageFlag.Parent, 3, 0xABCDEF);
         Assert.Equal((uint)0x43ABCDEF, id);
     }
 
     [Fact]
-    public void MessageId_값은_24비트로_마스크된다()
+    public void message_id_value_is_masked_to_24_bits()
     {
         uint id = MessageWireFormat.ComposeMessageId(MessageFlag.Standalone, 0, 0xFFFF_FFFF);
         Assert.Equal(0x00FF_FFFFu, id & MessageWireFormat.MessageIdValueMask);
@@ -35,14 +35,14 @@ public class WireFormatTests
     [InlineData(MessageFlag.Standalone, true)]
     [InlineData(MessageFlag.Parent, true)]
     [InlineData(MessageFlag.Child, true)]
-    public void NonId만_임베디드_ID가_없다(MessageFlag flag, bool expected)
+    public void only_nonid_lacks_an_embedded_id(MessageFlag flag, bool expected)
     {
         byte header = MessageWireFormat.ComposeHeaderByte(flag, 0);
         Assert.Equal(expected, MessageWireFormat.HasEmbeddedMessageId(header));
     }
 
     [Fact]
-    public void 헤더_크기_상수()
+    public void header_size_constants()
     {
         Assert.Equal(1, MessageWireFormat.NonIdHeaderSize);
         Assert.Equal(4, MessageWireFormat.IdHeaderSize);
@@ -52,7 +52,7 @@ public class WireFormatTests
 public class BufferIOTests
 {
     [Fact]
-    public void 프리미티브_전체_타입이_리틀엔디안으로_왕복한다()
+    public void all_primitive_types_round_trip_as_little_endian()
     {
         var writer = MessageBufferWriter.Create(1);
         writer.WriteBoolean(true);
@@ -69,7 +69,7 @@ public class BufferIOTests
         writer.WriteDecimal(-12345.6789m);
         writer.WriteChar('Z');
 
-        // 리틀엔디안 검증: int32 -2 (0xFFFFFFFE)
+        // Little-endian check: int32 -2 (0xFFFFFFFE)
         writer.WriteInt32(-2);
 
         var reader = new MessageBufferReader(writer.WrittenReadOnlySpan);
@@ -99,8 +99,8 @@ public class BufferIOTests
     [InlineData(null)]
     [InlineData("")]
     [InlineData("ascii")]
-    [InlineData("한글·日本語·🌟")]
-    public void 문자열은_길이접두로_왕복한다(string? value)
+    [InlineData("한글·日本語·🌟")] // intentional non-ASCII payload: exercises UTF-8 round-trip
+    public void string_round_trips_with_length_prefix(string? value)
     {
         var writer = MessageBufferWriter.Create();
         writer.WriteString(value);
@@ -111,7 +111,7 @@ public class BufferIOTests
     }
 
     [Fact]
-    public void null_문자열은_길이_마이너스1이다()
+    public void null_string_uses_length_minus_one()
     {
         var writer = MessageBufferWriter.Create();
         writer.WriteString(null);
@@ -121,9 +121,9 @@ public class BufferIOTests
     }
 
     [Fact]
-    public void 고립_서로게이트_문자열은_쓰기에서_거부된다()
+    public void lone_surrogate_string_is_rejected_on_write()
     {
-        // KI-20 회귀: 고립 서로게이트를 대체 바이트로 조용히 바꾸지 않고 인코딩 실패를 표면화한다.
+        // KI-20 regression: surfaces the encoding failure instead of silently replacing lone surrogates with replacement bytes.
         Assert.ThrowsAny<ArgumentException>(WriteLoneSurrogate);
     }
 
@@ -132,6 +132,7 @@ public class BufferIOTests
         var writer = MessageBufferWriter.Create();
         try
         {
+            // intentional non-ASCII payload containing a lone surrogate
             writer.WriteString("앞 \uD800 뒤");
         }
         finally
@@ -141,9 +142,9 @@ public class BufferIOTests
     }
 
     [Fact]
-    public void 무효_UTF8_문자열_페이로드는_읽기에서_거부된다()
+    public void invalid_utf8_string_payload_is_rejected_on_read()
     {
-        // KI-20 회귀: 길이 접두 2 + 2바이트 시퀀스 선도 바이트 0xC2 뒤에 연속 바이트가 아닌 0x01 → 무효 UTF-8.
+        // KI-20 regression: length prefix 2 + a 2-byte sequence whose lead byte 0xC2 is followed by non-continuation 0x01 → invalid UTF-8.
         byte[] bytes = { 2, 0, 0, 0, 0xC2, 0x01 };
         Assert.Throws<InvalidDataException>(() => new MessageBufferReader(bytes).ReadString());
     }
@@ -152,9 +153,9 @@ public class BufferIOTests
     [InlineData(-2)]
     [InlineData(-3)]
     [InlineData(int.MinValue)]
-    public void 마이너스1_외_음수_길이접두는_읽기에서_거부된다(int length)
+    public void negative_length_prefix_other_than_minus_one_is_rejected_on_read(int length)
     {
-        // KI-6 회귀: null 규약은 -1 뿐 — 다른 음수가 null 로 조용히 복호되면 손상 패킷이 은폐된다.
+        // KI-6 regression: only -1 maps to null — if other negatives silently decoded as null, corrupted packets would go unnoticed.
         Assert.Throws<InvalidDataException>(() => ReadStringWithLengthPrefix(length));
     }
 
@@ -173,7 +174,7 @@ public class BufferIOTests
     }
 
     [Fact]
-    public void 마이너스1_길이접두는_null로_복호된다()
+    public void minus_one_length_prefix_decodes_as_null()
     {
         var writer = MessageBufferWriter.Create();
         writer.WriteInt32(-1);
@@ -182,7 +183,7 @@ public class BufferIOTests
     }
 
     [Fact]
-    public void 범위를_벗어난_읽기는_EndOfStreamException()
+    public void read_beyond_range_throws_end_of_stream_exception()
     {
         Assert.Throws<EndOfStreamException>(ReadPastEnd);
         Assert.Throws<EndOfStreamException>(ReadBlockPastEnd);
@@ -203,7 +204,7 @@ public class BufferIOTests
     }
 
     [Fact]
-    public void writer는_용량_부족시_자동_증량한다()
+    public void writer_grows_automatically_when_capacity_is_insufficient()
     {
         var writer = MessageBufferWriter.Create(4);
         for (int i = 0; i < 1000; i++)
@@ -221,7 +222,7 @@ public class BufferIOTests
     }
 
     [Fact]
-    public void PooledBuffer는_스팬_뷰와_복사_배열을_제공한다()
+    public void pooledbuffer_provides_span_view_and_copied_array()
     {
         var writer = MessageBufferWriter.Create();
         writer.WriteInt32(77);
@@ -233,30 +234,30 @@ public class BufferIOTests
 
         pooled.Dispose();
         Assert.Equal(0, pooled.Length);
-        pooled.Dispose(); // 멱등
+        pooled.Dispose(); // idempotent
     }
 
     [Fact]
-    public void decimal_스케일이_28을_넘으면_읽기에서_거부된다()
+    public void decimal_scale_above_28_is_rejected_on_read()
     {
         byte[] bytes = WriteDecimalBytes(12.34m);
-        bytes[14] = 78; // 스케일 바이트(비트 16–23)를 78로 — DecCalc 크래시 구간
+        bytes[14] = 78; // scale byte (bits 16–23) set to 78 — a known DecCalc crash range
         Assert.Throws<InvalidDataException>(() => new MessageBufferReader(bytes).ReadDecimal());
     }
 
     [Fact]
-    public void decimal_flags에_예약_비트가_있으면_읽기에서_거부된다()
+    public void decimal_flags_with_reserved_bits_are_rejected_on_read()
     {
         byte[] bytes = WriteDecimalBytes(12.34m);
-        bytes[12] |= 0x01; // flags 비트 0(예약) 설정
+        bytes[12] |= 0x01; // set flags bit 0 (reserved)
         Assert.Throws<InvalidDataException>(() => new MessageBufferReader(bytes).ReadDecimal());
     }
 
     [Fact]
-    public void decimal_경계_스케일28은_허용된다()
+    public void decimal_boundary_scale_28_is_allowed()
     {
         var writer = MessageBufferWriter.Create();
-        writer.WriteDecimal(0.0000000000000000000000000001m); // 스케일 28(허용 최대)
+        writer.WriteDecimal(0.0000000000000000000000000001m); // scale 28 (maximum allowed)
         Assert.Equal(0.0000000000000000000000000001m, new MessageBufferReader(writer.WrittenReadOnlySpan).ReadDecimal());
         writer.Dispose();
     }
@@ -273,9 +274,9 @@ public class BufferIOTests
     [Theory]
     [InlineData(-1)]
     [InlineData(int.MinValue)]
-    public void 음수_Skip은_거부된다(int count)
+    public void negative_skip_is_rejected(int count)
     {
-        // KI-21 회귀: Skip(-n) 이 리더를 뒤로 이동시켜 forward-only 규약을 깨는 것을 차단한다.
+        // KI-21 regression: blocks Skip(-n) from moving the reader backward and breaking the forward-only contract.
         Assert.Throws<ArgumentOutOfRangeException>(() => SkipAfterFourBytes(count));
     }
 
@@ -289,9 +290,9 @@ public class BufferIOTests
     [Theory]
     [InlineData(-1)]
     [InlineData(int.MinValue)]
-    public void 음수_Advance는_거부된다(int count)
+    public void negative_advance_is_rejected(int count)
     {
-        // KI-21 회귀: Advance(-n) 이 기록 위치를 되돌려 이후 쓰기가 기존 페이로드를 덮어쓰는 것을 차단한다.
+        // KI-21 regression: blocks Advance(-n) from rewinding the write position so later writes cannot overwrite existing payload.
         Assert.Throws<ArgumentOutOfRangeException>(() => AdvanceAfterOneByte(count));
     }
 
@@ -310,9 +311,9 @@ public class BufferIOTests
     }
 
     [Fact]
-    public void 음수_Skip으로_소비한_바이트를_다시_읽을_수_없다()
+    public void bytes_consumed_cannot_be_reread_via_negative_skip()
     {
-        // 수정 전 Skip(-1) 은 예외 없이 위치만 되돌려 같은 바이트를 두 번 소비하게 했다.
+        // Before the fix, Skip(-1) rewound the position without throwing, letting the same byte be consumed twice.
         Assert.False(TryRewindAndReread());
     }
 
@@ -328,13 +329,13 @@ public class BufferIOTests
         {
             return false;
         }
-        return reader.ReadByte() == 0xAA; // 되돌아갔다면 같은 바이트를 다시 읽는다
+        return reader.ReadByte() == 0xAA; // if it rewound, the same byte is read again
     }
 
     [Fact]
-    public void 음수_Advance로_기록한_페이로드를_덮어쓸_수_없다()
+    public void written_payload_cannot_be_overwritten_via_negative_advance()
     {
-        // 수정 전 Advance(-1) 은 길이를 줄여 다음 쓰기가 첫 바이트를 덮어쓰게 했다.
+        // Before the fix, Advance(-1) shrank the length so the next write would overwrite the first byte.
         Assert.False(TryRewindAndOverwrite());
     }
 
@@ -353,7 +354,7 @@ public class BufferIOTests
                 return false;
             }
             writer.WriteByte(0xBB);
-            return writer.Length == 1 && writer.WrittenSpan[0] == 0xBB; // 되돌아갔다면 첫 바이트가 덮어써진다
+            return writer.Length == 1 && writer.WrittenSpan[0] == 0xBB; // if it rewound, the first byte gets overwritten
         }
         finally
         {
@@ -362,9 +363,9 @@ public class BufferIOTests
     }
 
     [Fact]
-    public void 위치_전진은_0과_양수만_허용된다()
+    public void only_zero_and_positive_position_advances_are_allowed()
     {
-        // 정상 경로 보존: Skip(0)·Advance(0) 은 무해하고 양수 전진은 기존대로 동작한다.
+        // Preserves the happy path: Skip(0) and Advance(0) are harmless, and positive advances work as before.
         var writer = MessageBufferWriter.Create();
         writer.WriteInt32(11);
         writer.WriteInt32(22);
@@ -385,27 +386,27 @@ public class BufferIOTests
     [InlineData(5)]
     [InlineData(1024)]
     [InlineData(1_000_000)]
-    [InlineData(715_827_881)] // 인코딩 자체 상한이 int 로 표현되는 마지막 부근
-    public void 문자열_버퍼_요구량은_UTF8_인코딩_상한과_일치한다(int charCount)
+    [InlineData(715_827_881)] // near the largest char count whose encoding upper bound still fits an int
+    public void string_buffer_requirement_matches_the_utf8_encoding_upper_bound(int charCount)
     {
-        // KI-22 회귀: 자체 long 공식이 `Encoding.GetMaxByteCount` + 길이 접두 4바이트와 같아야
-        // 상한을 좁히지(버퍼 부족)도 헤프게(과할당)도 바꾸지 않는다.
+        // KI-22 regression: the custom long formula must equal `Encoding.GetMaxByteCount` + the 4-byte length prefix,
+        // so it neither narrows the bound (buffer too small) nor wastes memory (over-allocation).
         int maxBytes = StrictUtf8().GetMaxByteCount(charCount);
         Assert.Equal(4L + maxBytes, MessageBufferWriter.GetStringBufferRequirement(charCount));
     }
 
     [Fact]
-    public void 문자열_버퍼_요구량은_int_상한_너머에서도_오버플로하지_않는다()
+    public void string_buffer_requirement_does_not_overflow_past_the_int_limit()
     {
-        // KI-22 회귀: 715,827,882 자부터 필요 용량이 int.MaxValue 를 넘으므로 int 산술로는 표현 자체가 불가하다.
+        // KI-22 regression: from 715,827,882 chars the required capacity exceeds int.MaxValue, so int arithmetic cannot even represent it.
         const int charCount = 715_827_882;
         long required = MessageBufferWriter.GetStringBufferRequirement(charCount);
-        Assert.True(required > int.MaxValue);                       // long 이라 정확히 표현됨
-        Assert.True(unchecked(4 + (charCount * 3 + 3)) < 0);        // 기존 int 표현은 음수로 오버플로 → 증설 누락
+        Assert.True(required > int.MaxValue);                       // exactly representable as a long
+        Assert.True(unchecked(4 + (charCount * 3 + 3)) < 0);        // the old int expression overflows negative → growth would be missed
     }
 
     [Fact]
-    public void 문자열_버퍼_요구량은_문자_수에_단조증가한다()
+    public void string_buffer_requirement_is_monotonically_increasing_in_char_count()
     {
         long previous = MessageBufferWriter.GetStringBufferRequirement(0);
         foreach (int charCount in new[] { 1, 1000, 715_827_882, int.MaxValue })
@@ -417,10 +418,10 @@ public class BufferIOTests
     }
 
     [Fact]
-    public void 큰_문자열도_정상_증설되어_왕복한다()
+    public void large_strings_still_grow_normally_and_round_trip()
     {
-        // KI-22 정상 경로: 새 long 용량 산술이 기존 증설·기록 동작을 바꾸지 않았는지 확인.
-        string value = new string('가', 100_000); // U+AC00 → UTF-8 문자당 3바이트
+        // KI-22 happy path: verifies the new long capacity arithmetic did not change the existing growth and write behavior.
+        string value = new string('가', 100_000); // U+AC00 → 3 bytes per UTF-8 char (intentional non-ASCII payload)
         var writer = MessageBufferWriter.Create(4);
         writer.WriteString(value);
         Assert.Equal(4 + 300_000, writer.Length);
@@ -432,38 +433,39 @@ public class BufferIOTests
         Encoding.GetEncoding(65001, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback);
 }
 
-// ---------- PooledBuffer 사본 소유권 공유 (KI-37) ----------
+// ---------- PooledBuffer copy ownership sharing (KI-37) ----------
 
 /// <summary>
-/// PooledBuffer 는 struct 라 대입·전달마다 사본이 생긴다. 수정 전은 사본의 Dispose 가 서로에게
-/// 보이지 않아 같은 대여 배열이 풀에 두 번 반납됐다(다음 대여자가 남의 데이터를 봄). 이제 모든 사본이
-/// 참조형 홀더를 공유해 정확히 한 번만 반납되고, 어떤 사본이 먼저 Dispose 해도 나머지는 빈 뷰를 본다.
+/// PooledBuffer is a struct, so every assignment/pass creates a copy. Before the fix, each copy's Dispose was invisible
+/// to the others, so the same rented array was returned to the pool twice (the next renter saw someone else's data).
+/// All copies now share a reference-type holder: the buffer is returned exactly once, and whichever copy Disposes first
+/// leaves the rest looking at an empty view.
 /// </summary>
 public class PooledBufferCopyOwnershipTests
 {
     [Fact]
-    public void 사본을_각각_Dispose해도_풀_반납은_정확히_한번이다()
+    public void disposing_each_copy_returns_to_the_pool_exactly_once()
     {
         var writer = MessageBufferWriter.Create();
         writer.WriteInt32(0x0A0B0C0D);
         var original = writer.ToPooledBuffer();
-        var copy = original; // struct 사본 — 수정 전 이 사본의 Dispose 가 이중 반납이었다
+        var copy = original; // struct copy — before the fix, disposing this copy double-returned
 
         Assert.Equal(4, copy.Length);
 
         copy.Dispose();
 
-        // 같은 소유 상태를 본다: 반납된 뒤 모든 사본의 뷰는 비어 있다.
+        // Same ownership state: after return, every copy's view is empty.
         Assert.Equal(0, copy.Length);
         Assert.Equal(0, original.Length);
         Assert.True(original.Span.IsEmpty);
         Assert.Empty(original.ToArray());
 
-        original.Dispose(); // 이미 반납됨 — 멱등, 예외 없음
+        original.Dispose(); // already returned — idempotent, no exception
     }
 
     [Fact]
-    public void 원본을_Dispose하면_사본_뷰도_비어_있다()
+    public void disposing_the_original_empties_the_copy_views_too()
     {
         var writer = MessageBufferWriter.Create();
         writer.WriteString("data");
@@ -477,7 +479,7 @@ public class PooledBufferCopyOwnershipTests
     }
 
     [Fact]
-    public void SerializePooled의_사본도_같은_소유권을_공유한다()
+    public void serializepooled_copies_share_the_same_ownership()
     {
         var message = new Fixtures.FlatMessage { Value = 77 };
         using var pooled = MessageSerializer.SerializePooled(message);
@@ -489,14 +491,14 @@ public class PooledBufferCopyOwnershipTests
         Assert.Equal(77, roundTrip.Value);
 
         copy.Dispose();
-        Assert.Equal(0, pooled.Length); // using 문의 이중 Dispose 도 안전
+        Assert.Equal(0, pooled.Length); // double Dispose via using is also safe
     }
 
     [Fact]
-    public void 빈_writer의_ToPooledBuffer는_Dispose로_예외가_나지_않는다()
+    public void topooledbuffer_of_empty_writer_does_not_throw_on_dispose()
     {
         var writer = MessageBufferWriter.Create();
-        var pooled = writer.ToPooledBuffer(); // Array.Empty 싱글턴 — 풀 반납 대상이 아니다
+        var pooled = writer.ToPooledBuffer(); // Array.Empty singleton — not a pool-return target
 
         Assert.Equal(0, pooled.Length);
         Assert.True(pooled.Span.IsEmpty);
@@ -504,13 +506,13 @@ public class PooledBufferCopyOwnershipTests
     }
 
     [Fact]
-    public void GetSpan_음수는_계약_예외로_거부된다()
+    public void negative_getspan_is_rejected_with_contract_exception()
     {
         var writer = MessageBufferWriter.Create();
         writer.WriteInt32(1);
         int positionBefore = writer.Length;
 
-        // writer 는 ref struct — 람다로 캡처할 수 없으므로 try/catch 로 계약 예외를 확인한다.
+        // The writer is a ref struct — it cannot be captured in a lambda, so the contract exception is checked via try/catch.
         ArgumentOutOfRangeException? exception = null;
         try
         {
@@ -523,11 +525,11 @@ public class PooledBufferCopyOwnershipTests
 
         Assert.NotNull(exception);
         Assert.Equal("size", exception.ParamName);
-        Assert.Equal(positionBefore, writer.Length); // 위치는 그대로 — 상태 오염 없음
+        Assert.Equal(positionBefore, writer.Length); // position unchanged — no state corruption
     }
 
     [Fact]
-    public void GetSpan_정상_경로는_전진_기록을_유지한다()
+    public void getspan_happy_path_preserves_forward_writes()
     {
         var writer = MessageBufferWriter.Create();
         System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(writer.GetSpan(4), 77);
@@ -537,20 +539,20 @@ public class PooledBufferCopyOwnershipTests
     }
 }
 
-// ---------- Create·FromRented 계약 (2026-09-08 테스트 갭 일괄 폐쇄) ----------
+// ---------- Create and FromRented contracts (2026-09-08 test-gap batch closure) ----------
 
-/// <summary>빈 버퍼 시작 경로와 FromRented 인자 검증(구현됨·무테스트)을 고정한다.</summary>
+/// <summary>Pins the empty-buffer start path and FromRented argument validation (implemented but previously untested).</summary>
 public class WriterCreateAndFromRentedContractTests
 {
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
     [InlineData(int.MinValue)]
-    public void Create_0이하_초기용량은_빈_버퍼로_시작해_첫_쓰기에_정상_증설된다(int initialCapacity)
+    public void create_with_non_positive_initial_capacity_starts_empty_and_grows_on_first_write(int initialCapacity)
     {
         var writer = MessageBufferWriter.Create(initialCapacity);
 
-        Assert.Equal(0, writer.Capacity); // Array.Empty 시작
+        Assert.Equal(0, writer.Capacity); // starts on Array.Empty
         writer.WriteInt32(77);
         writer.WriteString("ok");
 
@@ -561,14 +563,14 @@ public class WriterCreateAndFromRentedContractTests
     }
 
     [Fact]
-    public void FromRented는_null_배열을_거부한다()
+    public void fromrented_rejects_null_array()
     {
         var exception = Assert.Throws<ArgumentNullException>(() => PooledBuffer.FromRented(null!, 0));
         Assert.Equal("rented", exception.ParamName);
     }
 
     [Fact]
-    public void FromRented는_길이_초과를_거부한다()
+    public void fromrented_rejects_length_overrun()
     {
         var rented = new byte[8];
 
@@ -578,24 +580,24 @@ public class WriterCreateAndFromRentedContractTests
     }
 
     [Fact]
-    public void FromRented는_음수_길이도_거부한다()
+    public void fromrented_rejects_negative_length_too()
     {
         var rented = new byte[8];
 
-        // (uint)length > (uint)rented.Length 비교가 음수를 큰 양수로 잡는다.
+        // The (uint)length > (uint)rented.Length comparison catches negatives as huge positives.
         Assert.Throws<ArgumentOutOfRangeException>(() => PooledBuffer.FromRented(rented, -1));
     }
 }
 
 /// <summary>
-/// 전체 소비 검사(<c>DeserializeExact</c>) 계약 — 스키마 표류(ADR-0006 레이아웃 동결 위반)에서
-/// 발생하는 "남는 바이트"를 조용한 데이터 유실 대신 InvalidDataException 으로 전환한다.
-/// 기본 Deserialize 는 전송 계층 프레이밍 여유로 뒤에 붙은 바이트를 계속 허용한다(대조군).
+/// The exact-consumption check (<c>DeserializeExact</c>) contract — turns trailing bytes caused by schema drift
+/// (an ADR-0006 layout-freeze violation) into InvalidDataException instead of silent data loss.
+/// The default Deserialize keeps allowing trailing bytes as transport-layer framing slack (the control group).
 /// </summary>
 public class DeserializeExactTests
 {
     [Fact]
-    public void 제네릭_진입은_깨끗한_프레임을_그대로_왕복한다()
+    public void generic_entry_round_trips_a_clean_frame_as_is()
     {
         byte[] frame = MessageSerializer.Serialize(new MessageProtocol.Tests.Fixtures.FlatMessage { Value = 42 });
 
@@ -605,7 +607,7 @@ public class DeserializeExactTests
     }
 
     [Fact]
-    public void 제네릭_진입은_남은_바이트가_있으면_거부한다()
+    public void generic_entry_rejects_frames_with_remaining_bytes()
     {
         byte[] clean = MessageSerializer.Serialize(new MessageProtocol.Tests.Fixtures.FlatMessage { Value = 7 });
         byte[] padded = new byte[clean.Length + 3];
@@ -616,12 +618,12 @@ public class DeserializeExactTests
             () => MessageSerializer.DeserializeExact<MessageProtocol.Tests.Fixtures.FlatMessage>(padded));
 
         Assert.Contains("trailing", exception.Message);
-        // 대조군: 기본 Deserialize 는 접미 여유 바이트를 계속 허용한다(전송 계층 프레이밍 여유).
+        // Control group: the default Deserialize keeps allowing trailing slack bytes (transport-layer framing slack).
         Assert.Equal(7, MessageSerializer.Deserialize<MessageProtocol.Tests.Fixtures.FlatMessage>(padded).Value);
     }
 
     [Fact]
-    public void object_dispatch_진입은_깨끗한_프레임을_그대로_왕복한다()
+    public void object_dispatch_entry_round_trips_a_clean_frame_as_is()
     {
         byte[] frame = MessageSerializer.Serialize(new MessageProtocol.Tests.Fixtures.FlatMessage { Value = 11 });
 
@@ -631,7 +633,7 @@ public class DeserializeExactTests
     }
 
     [Fact]
-    public void object_dispatch_진입은_남은_바이트가_있으면_거부한다()
+    public void object_dispatch_entry_rejects_frames_with_remaining_bytes()
     {
         byte[] clean = MessageSerializer.Serialize(new MessageProtocol.Tests.Fixtures.FlatMessage { Value = 9 });
         byte[] padded = new byte[clean.Length + 1];
@@ -645,7 +647,7 @@ public class DeserializeExactTests
     }
 
     [Fact]
-    public void 제네릭_구성_프레임도_전체_소비_검사를_통과한다()
+    public void generic_construction_frames_also_pass_the_exact_consumption_check()
     {
         var envelope = new MessageProtocol.Tests.Fixtures.GenericEnvelope<MessageProtocol.Tests.Fixtures.FlatMessage> { Value = new MessageProtocol.Tests.Fixtures.FlatMessage { Value = 3 }, Note = "n" };
         byte[] frame = MessageSerializer.Serialize(envelope);
@@ -654,25 +656,25 @@ public class DeserializeExactTests
 
         Assert.Equal(3, restored.Value!.Value);
         Assert.Equal("n", restored.Note);
-        // object dispatch 경로(제네릭 헤더 라우팅)도 동일 계약.
+        // The object dispatch path (generic header routing) follows the same contract.
         Assert.IsType<MessageProtocol.Tests.Fixtures.GenericEnvelope<MessageProtocol.Tests.Fixtures.FlatMessage>>(MessageSerializer.DeserializeExact(frame));
     }
 
     [Fact]
-    public void 빈_span은_InvalidDataException_이_아니라_ArgumentException으로_거부한다()
+    public void empty_span_is_rejected_with_argumentexception_not_invaliddataexception()
     {
-        // 진입 검증(인자 오류)은 와이어 오류(InvalidDataException)와 구분된다 — 호출자 측 버그와
-        // 악성 프레임을 같은 타입으로 섞으면 상용 서버의 예외 필터가 분류를 못 한다. 두 진입 모두 고정.
+        // Entry validation (argument errors) is distinct from wire errors (InvalidDataException) — mixing caller-side bugs
+        // and malicious frames under one type leaves production server exception filters unable to classify them. Both entries are pinned.
         Assert.Throws<ArgumentException>(
             () => MessageSerializer.DeserializeExact<MessageProtocol.Tests.Fixtures.FlatMessage>(ReadOnlySpan<byte>.Empty));
         Assert.Throws<ArgumentException>(() => MessageSerializer.DeserializeExact(ReadOnlySpan<byte>.Empty));
     }
 
     [Fact]
-    public void NonId_프레임도_전체_소비_검사를_통과한다()
+    public void nonid_frames_also_pass_the_exact_consumption_check()
     {
-        // NonId 프레임은 헤더가 1바이트다 — 잔여 바이트 검사가 1바이트 헤더 프레임에서도
-        // 동작함을 고정한다(KI-41 상호작용: 제네릭 진입은 NonId 거부를 우회한다).
+        // A NonId frame has a 1-byte header — pins that the remaining-bytes check also works on 1-byte-header frames
+        // (KI-41 interaction: the generic entry bypasses the NonId rejection).
         var message = new MessageProtocol.Tests.Fixtures.NoIdMessage { Flag = 7, Note = "nonid" };
         byte[] frame = MessageSerializer.Serialize(message);
 

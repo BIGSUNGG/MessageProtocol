@@ -8,36 +8,39 @@ using Xunit;
 namespace MessageProtocol.Tests;
 
 /// <summary>
-/// 역직렬화 신뢰 경계의 적대적 차등 퍼징 — 개별 가드의 단위 테스트가 아니라 **통합 불변식**을 검증한다.
-/// 유효 프레임에 결정적 변이(비트 뒤집기·절단·극값 치환·다중 비트·가비지 접미)를 가한 뒤:
-///  ① 거부는 항상 알려진 깨끗한 예외 유형으로만 일어난다(처음 보는 예외 유형 = 새로운 결함),
-///  ② 성공한 판독은 조용한 손상이 아니다 — 결과를 재직렬화한 바이트를 다시 왕복하면 동일 바이트가
-///     나와야 한다(멱등 왕복; 직렬화는 결정적이므로 바이트 비교가 동등성 오라클이 된다).
-/// 두 진입을 모두 압박한다 — object dispatch(헤더 라우팅 포함)와 제네릭 진입(이형 헤더는 KI-5 검증에서 거부).
-/// 시드 고정(재현 가능) — 실패 시 진입·반복 번호가 진단에 노출된다.
+/// Adversarial differential fuzzing of the deserialization trust boundary — verifies **integration
+/// invariants** rather than unit-testing individual guards. Apply deterministic mutations to valid frames
+/// (bit flips, truncation, extreme-value substitution, multi-bit, garbage suffix), then check that:
+///  ① rejections always happen with known clean exception types (an unseen exception type = a new defect), and
+///  ② a successful read is not silent corruption — reserializing the result and round-tripping again must
+///     reproduce identical bytes (idempotent round trip; serialization is deterministic, so byte comparison
+///     serves as the equivalence oracle).
+/// Both entries are stressed — object dispatch (including header routing) and the generic entry (mismatched
+/// headers are rejected by the KI-5 verification).
+/// Seeded (reproducible) — on failure the entry and iteration number are exposed in the diagnostics.
 /// </summary>
 public class DeserializerFuzzTests
 {
     static readonly System.Type[] CleanRejections =
     {
-        typeof(System.IO.InvalidDataException),     // 와이어 내용 불법(헤더·태그·깊이·UTF-8·decimal flags·디스패치 유형)
-        typeof(System.IO.EndOfStreamException),     // 경계 위반·과할당 가드
-        typeof(KeyNotFoundException),               // 미등록 MessageId/(MessageId,ClassId)
-        typeof(InvalidOperationException),           // 등록/계약 위반 안내
-        typeof(ArgumentException),                  // 빈 입력 등 인자 계약
+        typeof(System.IO.InvalidDataException),     // illegal wire content (header, tag, depth, UTF-8, decimal flags, dispatch type)
+        typeof(System.IO.EndOfStreamException),     // boundary violations, over-allocation guard
+        typeof(KeyNotFoundException),               // unregistered MessageId/(MessageId,ClassId)
+        typeof(InvalidOperationException),           // registration/contract violations
+        typeof(ArgumentException),                  // argument contracts such as empty input
         typeof(ArgumentNullException),
         typeof(ArgumentOutOfRangeException),
     };
 
-    /// <summary>퍼징 시드 프레임 — object dispatch 진입과(옵션으로) 제네릭 진입의 쌍.</summary>
+    /// <summary>Fuzzing seed frames — pairs of the object dispatch entry and (optionally) the generic entry.</summary>
     static (byte[] Frame, System.Type? TypedEntry)[] BuildSeedFrames()
     {
         var allTypes = new AllTypesMessage
         {
             Bool = true, Byte = 200, SByte = -3, Int16 = -1234, UInt16 = 51234,
             Int32 = -987654, UInt32 = 3_000_000_000, Int64 = long.MinValue / 2, UInt64 = ulong.MaxValue / 2,
-            Single = 3.5f, Double = -2.718281828, Decimal = 123456.789m, Char = '한',
-            Text = "텍스트 with ASCII 123", Level = Level.Mid,
+            Single = 3.5f, Double = -2.718281828, Decimal = 123456.789m, Char = '한', // Char: intentional non-ASCII payload (UTF-8)
+            Text = "텍스트 with ASCII 123", Level = Level.Mid, // Text: intentional non-ASCII payload (UTF-8)
             Blob = new byte[] { 1, 2, 3, 250, 251 },
             Samples = new List<double> { 1.5, -2.5, double.Epsilon },
             Tags = new[] { "a", "bb", "ccc" },
@@ -54,13 +57,14 @@ public class DeserializerFuzzTests
         var noId = new NoIdMessage { Flag = 7, Note = "nonid" };
         var login = new LoginEvent { Timestamp = 123L, User = "kim" };
 
-        // 깊이 상한(64) 바로 아래의 체인 — 절단·비트 변이가 깊이 가드와 상호작용한다.
+        // A chain just under the depth limit (64) — truncation and bit mutations interact with the depth guard.
         ChainMessage deep = new ChainMessage();
         for (int i = 0; i < 60; i++) deep = new ChainMessage { Next = deep };
 
-        // netstandard2.1 폴백 프로파일(Unity — CollectionsMarshal 없음)로 생성된 타입: 인덱서 루프
-        // 판독기·폴백 벌크 가드를 변이 하에 검증한다. 이 어셈블리의 생성 코드는 대상 프레임워크 기준으로
-        // 갈리므로 Tests(net8/9) 코퍼스만으로는 폴백 경로가 절대 돌지 않았다(2026-09-08 커버리지 확장).
+        // Type generated under the netstandard2.1 fallback profile (Unity — no CollectionsMarshal): exercises
+        // the indexer-loop reader and fallback bulk guards under mutation. Generated code in that assembly is
+        // split by target framework, so the Tests (net8/9) corpus alone never ran the fallback path
+        // (2026-09-08 coverage expansion).
         var fallback = new MessageProtocol.NetStandardFixtures.FallbackCollections
         {
             Bulk = new List<int> { 1, -2, 3, int.MaxValue },
@@ -75,7 +79,7 @@ public class DeserializerFuzzTests
             (MessageSerializer.Serialize(allTypes), typeof(AllTypesMessage)),
             (MessageSerializer.Serialize(chain), typeof(ChainMessage)),
             (MessageSerializer.Serialize(envelope), typeof(GenericEnvelope<FlatMessage>)),
-            (MessageSerializer.Serialize(noId), (System.Type?)null),        // NonId: object dispatch 거부 경로
+            (MessageSerializer.Serialize(noId), (System.Type?)null),        // NonId: object dispatch rejection path
             (MessageSerializer.Serialize(login), (System.Type?)typeof(LoginEvent)),
             (MessageSerializer.Serialize(deep), (System.Type?)typeof(ChainMessage)),
             (MessageSerializer.Serialize(fallback), (System.Type?)typeof(MessageProtocol.NetStandardFixtures.FallbackCollections)),
@@ -83,10 +87,10 @@ public class DeserializerFuzzTests
     }
 
     [Fact]
-    public void 변이_프레임은_깨끗하게_거부되거나_멱등하게_왕복한다()
+    public void mutated_frames_are_either_cleanly_rejected_or_round_trip_idempotently()
     {
         const int seed = 20260908;
-        // 캠페인 노브: MSGPROT_FUZZ_SCALE=N 으로 로컬 심층 캠페인(예: 15) — CI 는 기본 1(속도 우선).
+        // Campaign knob: MSGPROT_FUZZ_SCALE=N runs a deeper local campaign (e.g. 15) — CI keeps the default 1 (speed first).
         int scale = int.TryParse(Environment.GetEnvironmentVariable("MSGPROT_FUZZ_SCALE"), out var parsed) && parsed > 0
             ? parsed
             : 1;
@@ -103,11 +107,11 @@ public class DeserializerFuzzTests
                 var mutant = Mutate(original, random);
                 if (mutant is null) continue;
 
-                // ① object dispatch 진입 — 헤더 라우팅 포함.
+                // ① object dispatch entry — including header routing.
                 firstFailure = ParseAndClassify(mutant, i, "dispatch", ref rejected, ref accepted);
                 if (firstFailure is not null) break;
 
-                // ② 제네릭 진입 — 이형 헤더는 KI-5 검증에서, 본문 변이는 생성 판독기에서 처리된다.
+                // ② generic entry — mismatched headers are caught by the KI-5 verification, body mutations by the generated readers.
                 if (typedEntry is not null)
                 {
                     firstFailure = ParseTypedAndClassify(mutant, typedEntry, i, ref rejected);
@@ -117,9 +121,9 @@ public class DeserializerFuzzTests
         }
 
         Assert.True(firstFailure is null, firstFailure);
-        // 퍼저가 실제로 양쪽 경로를 다 쳤는지(죽은 퍼저 방지) — 최소 관측 하한.
-        Assert.True(rejected > 300, $"거부 관측 부족: {rejected}");
-        Assert.True(accepted > 50, $"수용 관측 부족: {accepted}");
+        // Confirms the fuzzer actually exercised both paths (guards against a dead fuzzer) — minimum observation floors.
+        Assert.True(rejected > 300, $"too few rejection observations: {rejected}");
+        Assert.True(accepted > 50, $"too few acceptance observations: {accepted}");
     }
 
     static string? ParseAndClassify(byte[] mutant, int iteration, string entry, ref int rejected, ref int accepted)
@@ -136,7 +140,7 @@ public class DeserializerFuzzTests
                 rejected++;
                 return null;
             }
-            return $"iter {iteration} [{entry}]: 예상 밖 예외 유형 {rejection.GetType().FullName}: {rejection.Message}";
+            return $"iter {iteration} [{entry}]: unexpected exception type {rejection.GetType().FullName}: {rejection.Message}";
         }
 
         accepted++;
@@ -147,11 +151,11 @@ public class DeserializerFuzzTests
             byte[] bytes3 = MessageSerializer.Serialize(parsed2);
             return bytes3.SequenceEqual(bytes2)
                 ? null
-                : $"iter {iteration} [{entry}]: 비멱등 왕복 — 조용한 손상 의심";
+                : $"iter {iteration} [{entry}]: non-idempotent round trip — silent corruption suspected";
         }
         catch (Exception roundTrip)
         {
-            return $"iter {iteration} [{entry}]: 성공 판독이 재왕복 실패({roundTrip.GetType().FullName}: {roundTrip.Message})";
+            return $"iter {iteration} [{entry}]: successful read failed re-round-trip ({roundTrip.GetType().FullName}: {roundTrip.Message})";
         }
     }
 
@@ -159,8 +163,9 @@ public class DeserializerFuzzTests
     {
         try
         {
-            // 제네릭 진입은 리플렉션으로 닫힌 제네릭 메서드를 호출 — 퍼저 본체와 같은 예외 계약을 검증한다.
-            // Deserialize(byte[]) 는 제네릭·object 두 오버로드가 있어 이름+인자 조회는 모호하다 — 제네릭 정의만 골라 닫는다.
+            // The generic entry is invoked via reflection on a closed generic method — verifies the same
+            // exception contract as the fuzzer body. Deserialize(byte[]) has generic and object overloads, so
+            // a name+argument lookup would be ambiguous — pick only the generic definition and close it.
             var method = typeof(MessageSerializer)
                 .GetMethods(BindingFlags.Public | BindingFlags.Static)
                 .Single(m => m.Name == nameof(MessageSerializer.Deserialize)
@@ -179,17 +184,17 @@ public class DeserializerFuzzTests
                 rejected++;
                 return null;
             }
-            return $"iter {iteration} [typed {typedEntry.Name}]: 예상 밖 예외 유형 {inner.GetType().FullName}: {inner.Message}";
+            return $"iter {iteration} [typed {typedEntry.Name}]: unexpected exception type {inner.GetType().FullName}: {inner.Message}";
         }
         catch (Exception direct)
         {
-            // Invoke 자체의 실패(인자 계약)는 깨끗한 유형만 허용.
+            // Failures of Invoke itself (argument contract) allow only clean types.
             if (CleanRejections.Contains(direct.GetType()))
             {
                 rejected++;
                 return null;
             }
-            return $"iter {iteration} [typed {typedEntry.Name}]: 예상 밖 예외 유형 {direct.GetType().FullName}: {direct.Message}";
+            return $"iter {iteration} [typed {typedEntry.Name}]: unexpected exception type {direct.GetType().FullName}: {direct.Message}";
         }
     }
 
@@ -198,23 +203,23 @@ public class DeserializerFuzzTests
         var mutant = (byte[])original.Clone();
         switch (random.Next(5))
         {
-            case 0: // 비트 뒤집기
+            case 0: // bit flip
                 mutant[random.Next(mutant.Length)] ^= (byte)(1 << random.Next(8));
                 break;
-            case 1: // 절단
+            case 1: // truncation
                 if (mutant.Length <= 1) return null;
                 Array.Resize(ref mutant, random.Next(mutant.Length));
                 break;
-            case 2: // 극값 치환
+            case 2: // extreme-value substitution
                 mutant[random.Next(mutant.Length)] = (byte)random.Next(256);
                 break;
-            case 3: // 다중 비트 — 실제 손상은 한 바이트에 그치지 않는다; 길이 접두 근처 동시 타격 포함
+            case 3: // multi-bit — real corruption does not stop at one byte; includes simultaneous hits near length prefixes
                 for (int k = 0; k < 2 + random.Next(3); k++)
                 {
                     mutant[random.Next(mutant.Length)] ^= (byte)(1 << random.Next(8));
                 }
                 break;
-            case 4: // 가비지 접미 — 절단의 역방향: 뒤에 붙은 쓰레기는 소비되지 않고 남아야 한다
+            case 4: // garbage suffix — inverse of truncation: trailing junk must remain unconsumed
                 if (mutant.Length > 256) return null;
                 var extended = new byte[mutant.Length + 1 + random.Next(8)];
                 mutant.CopyTo(extended, 0);

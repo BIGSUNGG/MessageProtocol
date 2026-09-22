@@ -5,7 +5,7 @@ using System.Runtime.CompilerServices;
 namespace MessageProtocol.Serialize
 {
     /// <summary>
-    /// netstandard2.1 에 없는 float/double 리틀엔디안 읽기·쓰기를 제공한다.
+    /// Provides little-endian float/double reads and writes missing from netstandard2.1.
     /// </summary>
     static class BinaryPrimitivesCompat
     {

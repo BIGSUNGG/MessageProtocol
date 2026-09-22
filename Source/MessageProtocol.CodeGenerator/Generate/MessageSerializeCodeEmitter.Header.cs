@@ -5,7 +5,7 @@ namespace MessageProtocol.CodeGenerator.Generate
 {
     internal static partial class MessageSerializeCodeEmitter
     {
-        /// <summary>생성 파일 헤더: using 과 네임스페이스.</summary>
+        /// <summary>Generated-file header: usings and namespace.</summary>
         internal static class Header
         {
             public static string Emit(TypeMetadata typeMeta, out bool hasNamespace)

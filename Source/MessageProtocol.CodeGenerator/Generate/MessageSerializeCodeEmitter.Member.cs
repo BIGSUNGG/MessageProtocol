@@ -6,7 +6,7 @@ namespace MessageProtocol.CodeGenerator.Generate
 {
     internal static partial class MessageSerializeCodeEmitter
     {
-        /// <summary>멤버 단위 직렬화·역직렬화 코드 이미터.</summary>
+        /// <summary>Per-member serialize/deserialize code emitter.</summary>
         internal static class Member
         {
             public static string EmitSerialize(
@@ -42,8 +42,9 @@ namespace MessageProtocol.CodeGenerator.Generate
             }
 
             /// <summary>
-            /// 생성 코드는 멤버마다 `result.멤버 = …` 로 대입한다 — 읽기 전용·초기화 전용·읽기전용 필드는 채울 수 없다.
-            /// 루트 타입은 자기 partial 안이라 모든 접근 수준 허용, 중첩 페이로드는 루트 클래스에서 접근 가능한 internal 이상만 허용.
+            /// Generated code assigns via `result.Member = …` — read-only, init-only, and readonly fields cannot be filled.
+            /// The root type is assigned inside its own partial, so any access level is allowed; nested payloads must be
+            /// at least internal, i.e. accessible from the root class.
             /// </summary>
             static bool IsDeserializableMember(MemberMetadata member, bool isRootType)
             {
@@ -91,13 +92,13 @@ namespace MessageProtocol.CodeGenerator.Generate
                     return primitiveWrite;
                 }
 
-                // 1.5) 타입 매개변수: 런타임 메시지 디스패치 (T 에는 등록된 메시지 타입만 올 수 있다).
+                // 1.5) Type parameters: runtime message dispatch (only registered message types can appear as T).
                 if (typeSymbol is ITypeParameterSymbol)
                 {
                     return EmitRuntimeDispatchWrite(valueExpression, indent, state);
                 }
 
-                // 2) 배열 (1차원만 지원)
+                // 2) Arrays (one-dimensional only)
                 if (typeSymbol is IArrayTypeSymbol arrayType)
                 {
                     if (arrayType.Rank != 1)
@@ -116,16 +117,17 @@ namespace MessageProtocol.CodeGenerator.Generate
                     return EmitListWrite(typeSymbol, collectionElementType, valueExpression, indent, graph, state, diagnosticLocation, memberDisplayName);
                 }
 
-                // 4) 그래프 내부 타입 (메시지·중첩 객체 공통)
+                // 4) In-graph types (messages and nested objects alike)
                 if (graph.TryGetSerializableObjectType(typeSymbol, out var inGraphModel))
                 {
                     return EmitInGraphMessageWrite(inGraphModel, valueExpression, indent, state);
                 }
 
-                // 5) 메시지 타입인데 그래프 밖 (다른 어셈블리 등) — 정적 Serialize 위임.
-                //    단, 추상 메시지 타입(abstract [Message(MessageKind.Parent)] 등)은 생성기가 정적 Serialize/Deserialize 를
-                //    방출하지 않으므로(MSGPROT010 계열 — 인스턴스 생성 불가) 위임 코드가 소비자 빌드를 CS0117 로 깨뜨린다.
-                //    대신 런타임 메시지 디스패치로 *구체* 요소를 헤더째 쓴다 — 파생 멤버 유실 없이 다형성이 복원된다.
+                // 5) Message types outside the graph (other assemblies etc.) — delegate to static Serialize.
+                //    Except abstract message types (e.g. abstract [Message(MessageKind.Parent)]) get no static
+                //    Serialize/Deserialize emitted (MSGPROT010 family — not instantiable), so delegation code would
+                //    break the consumer build with CS0117. Instead, runtime message dispatch writes the *concrete*
+                //    element with its header — polymorphism is restored without losing derived members.
                 if (graph.IsMessageType(typeSymbol))
                 {
                     return typeSymbol.IsAbstract
@@ -177,8 +179,9 @@ namespace MessageProtocol.CodeGenerator.Generate
                     return EmitInGraphMessageRead(inGraphModel, targetExpression, indent, state);
                 }
 
-                // 추상 메시지 타입은 생성 정적 Deserialize 가 없어 위임이 CS0117 을 낸다 — 쓰기 경로와 같은 이유로
-                // 런타임 디스패치로 읽고 선언 타입(추상 루트)으로 캐스트한다 (실체 인스턴스는 등록된 구체 요소).
+                // Abstract message types have no generated static Deserialize, so delegation would raise CS0117 — for
+                // the same reason as the write path, read via runtime dispatch and cast to the declared (abstract root)
+                // type (the actual instance is a registered concrete element).
                 if (graph.IsMessageType(typeSymbol))
                 {
                     return typeSymbol.IsAbstract
@@ -199,14 +202,15 @@ namespace MessageProtocol.CodeGenerator.Generate
                 return string.Empty;
             }
 
-            // ------- 그래프 내부 객체 (참조 추적) -------
+            // ------- In-graph objects (reference tracking) -------
             //
-            // 참조 추적 3경로(그래프 내부·그래프 밖 위임·런타임 디스패치)의 쓰기·판독 골격은 같은
-            // Null/BackReference/NewObject 와이어 프로토콜을 공유한다. 골격과 안내 메시지(KI-34 백레퍼런스
-            // 불일치·KI-36 알수없는 태그)는 아래 두 헬퍼가 단일 사실원으로 뿜고, 경로별 차이(등록 순서·
-            // null 표현·프레임 호출문·태그 로컬 이름)만 호출부가 전달한다 — 6곳 수작업 복제는 이미 문장
-            // 순서 표류(in-graph 는 RegisterObject 먼저, 나머지는 태그 먼저)를 보였다(2026-09-08 구조
-            // 감사 FINDING 1). 생성 바이트는 기존과 동일하다(골든 비교로 검증).
+            // The write/read skeletons of all three reference-tracking paths (in-graph, out-of-graph delegation,
+            // runtime dispatch) share the same Null/BackReference/NewObject wire protocol. The two helpers below
+            // emit the skeleton and guidance messages (KI-34 back-reference mismatch, KI-36 unknown tag) from a
+            // single source of truth; callers pass only the per-path differences (registration order, null
+            // representation, frame call statement, tag local name) — six hand-copied sites already showed sentence
+            // order drift (in-graph registers the object first, the rest write the tag first) (structural audit
+            // FINDING 1, 2026-09-08). Emitted bytes are identical to before (verified by golden comparison).
 
             static string EmitTrackedReferenceWrite(string valueExpression, int uid, string indent, string newObjectBody)
             {
@@ -289,7 +293,7 @@ namespace MessageProtocol.CodeGenerator.Generate
                 return EmitTrackedReferenceRead("__refKind", model.TypeName, targetExpression, uid, indent, $"{targetExpression} = null;", newObjectBody);
             }
 
-            // ------- 그래프 밖 메시지 (정적 Serialize/Deserialize 위임) -------
+            // ------- Out-of-graph messages (static Serialize/Deserialize delegation) -------
 
             static string EmitOutOfGraphMessageWrite(ITypeSymbol typeSymbol, string valueExpression, string indent, EmitState state)
             {
@@ -326,14 +330,14 @@ namespace MessageProtocol.CodeGenerator.Generate
                 return $"{indent}{targetExpression} = {typeName}.Deserialize(ref reader);\n";
             }
 
-            // ------- 런타임 메시지 디스패치 (타입 매개변수·추상 메시지 멤버) -------
+            // ------- Runtime message dispatch (type parameters and abstract message members) -------
 
             /// <summary>
-            /// 런타임 타입 디스패치 쓰기: 전체 메시지(헤더 포함)을 <c>SerializeToWriter</c> 로 쓴다.
-            /// 타입 매개변수 멤버와 추상 메시지 타입 멤버가 공유한다. 호출측 SerializeContext 의
-            /// 오브젝트 id 추적을 그대로 쓴다 — 같은 인스턴스가 두 번 등장하면 두 번째부터 백레퍼런스로
-            /// 기록되어 참조 동일성이 복원된다(감사 원장 MEDIUM, 2026-09-05 패스 · KI-9). 프레임 내부는
-            /// 여전히 자체 컨텍스트를 쓰므로 프레임 경계를 넘는 공유는 별개 인스턴스로 남는다.
+            /// Runtime type-dispatch write: writes the whole message (header included) via <c>SerializeToWriter</c>.
+            /// Shared by type-parameter members and abstract message-typed members. Reuses the caller's
+            /// SerializeContext object-id tracking — when the same instance appears twice, the second occurrence is
+            /// written as a back-reference, restoring reference identity (audit ledger MEDIUM, 2026-09-05 pass, KI-9).
+            /// Frame interiors still use their own context, so sharing across frame boundaries remains separate instances.
             /// </summary>
             static string EmitRuntimeDispatchWrite(string valueExpression, string indent, EmitState state)
             {
@@ -346,18 +350,20 @@ namespace MessageProtocol.CodeGenerator.Generate
             }
 
             /// <summary>
-            /// 런타임 타입 디스패치 읽기: 헤더의 MessageId 로 등록된 구체 타입을 복원하고 선언 타입으로 캐스트한다.
-            /// 쓰기와 대칭으로 백레퍼런스를 역참조하고, 복원된 인스턴스를 호출측 컨텍스트에 등록한다 —
-            /// 쓰기는 프레임 앞에서·읽기는 프레임 뒤에서 등록하지만 그 사이 외부 컨텍스트 등록은 없으므로
-            /// id 순서는 양측이 일치한다(KI-9 해소).
+            /// Runtime type-dispatch read: restores the registered concrete type from the header's MessageId and casts
+            /// it to the declared type. Symmetric with the write path: dereferences back-references and registers the
+            /// restored instance with the caller's context — the write registers before the frame and the read after
+            /// it, but no external context registration happens in between, so the id order matches on both sides
+            /// (KI-9 resolved).
             /// </summary>
             static string EmitRuntimeDispatchRead(ITypeSymbol typeSymbol, string targetExpression, string indent, EmitState state)
             {
                 int uid = state.NextUniqueId();
                 string typeName = GetTypeDisplayName(typeSymbol);
-                // 디스패치 복원 객체를 선언 타입으로 블라인드 캐스트하지 않는다(KI-41, 2026-09-08 퍼저 발견):
-                // 불신 헤더가 다른 등록 타입으로 라우팅하면 InvalidCastException 이 원인 없이 터졌다 —
-                // 백레퍼런스 분기(KI-34)와 같은 계열의 안내 검사로 교정한다.
+                // Do not blind-cast the dispatched object to the declared type (KI-41, found by the fuzzer 2026-09-08):
+                // an untrusted header routing to a different registered type used to explode with an
+                // InvalidCastException with no explanation — corrected with a guiding check of the same family as
+                // the back-reference branch (KI-34).
                 string newObjectBody = $@"{indent}        var __dispatched{uid} = MessageSerializer.DeserializeFromReader(ref reader);
 {indent}        if (!(__dispatched{uid} is {typeName}))
 {indent}        {{
@@ -369,16 +375,19 @@ namespace MessageProtocol.CodeGenerator.Generate
                 return EmitTrackedReferenceRead("__pk", typeName, targetExpression, uid, indent, $"{targetExpression} = default;", newObjectBody);
             }
 
-            // ------- 배열 -------
+            // ------- Arrays -------
             //
-            // 컬렉션 쓰기는 멤버 표현식을 **딱 한 번** 평가해 로컬로 스냅샷한다(`__arr`/`__coll`/`__list` → `__span`/`__count`).
-            // null 판정도 스냅샷 로컬로 한다. 두 가지 이유 (Known-Issues KI-26):
-            //  ① 일관성 — 길이 접두와 요소를 서로 다른 평가에서 가져오면 프레임이 스스로 모순된다.
-            //     계산형 프로퍼티(`public IList<int> Codes => Build();`)에서는 길이가 다른 컬렉션에서 나오고,
-            //     두 번째 평가가 null 을 돌려주면 else 분기 안에서 NRE 가 난다(TOCTOU).
-            //  ② 비용 — 이전 코드는 `Count`(길이 접두) + `Count`(루프 조건, N+1회) + 인덱서(멤버 접근 N회)로
-            //     게터가 2N+2회 돌았다. `CollectionsMarshal` 경로가 이미 스팬으로 스냅샷하던 것과 같은 규약으로 맞춘다
-            //     (특히 `CollectionsMarshal` 이 없는 Unity/netstandard2.1 의 `List<T>`·`IList<T>` 에서 효과).
+            // Collection writes evaluate the member expression **exactly once** and snapshot it into a local
+            // (`__arr`/`__coll`/`__list` → `__span`/`__count`); the null check uses the snapshot local too. Two
+            // reasons (Known-Issues KI-26):
+            //  (1) Consistency — taking the length prefix and the elements from different evaluations makes the frame
+            //      contradict itself. On a computed property (`public IList<int> Codes => Build();`) the length comes
+            //      from one collection and, if the second evaluation returns null, an NRE hits inside the else
+            //      branch (TOCTOU).
+            //  (2) Cost — the previous code ran the getter 2N+2 times: `Count` for the length prefix + `Count` in the
+            //      loop condition (N+1) + indexer (N member accesses). This matches the contract the
+            //      `CollectionsMarshal` path already had (snapshot as a span) — most visible on `List<T>`/`IList<T>`
+            //      under Unity/netstandard2.1 where `CollectionsMarshal` is unavailable.
 
             static string EmitArrayWrite(
                 IArrayTypeSymbol arrayType,
@@ -490,8 +499,8 @@ namespace MessageProtocol.CodeGenerator.Generate
             // ------- List<T> / IList<T> -------
 
             /// <summary>
-            /// CollectionsMarshal 고속 경로는 선언 타입이 정확히 List&lt;T&gt; 일 때만 사용한다
-            /// (IList&lt;T&gt; 멤버는 인덱서 루프).
+            /// The CollectionsMarshal fast path is used only when the declared type is exactly List&lt;T&gt;
+            /// (IList&lt;T&gt; members take the indexer loop).
             /// </summary>
             static bool UseCollectionsMarshal(ITypeSymbol containerType, EmitState state)
             {
@@ -671,7 +680,7 @@ namespace MessageProtocol.CodeGenerator.Generate
 ";
             }
 
-            // ------- 프리미티브 / enum / string -------
+            // ------- Primitives / enum / string -------
 
             static bool TryEmitPrimitiveWrite(ITypeSymbol typeSymbol, string valueExpression, string indent, out string code)
             {
@@ -696,11 +705,12 @@ namespace MessageProtocol.CodeGenerator.Generate
             }
 
             /// <summary>
-            /// 원시형 단일 사실원 표 — 읽기 식·쓰기 호출 포맷·고정 wire 크기·벌크 복사 크기를 한 곳에 둔다.
-            /// 과거 4개의 독립 스위치(읽기·쓰기·고정 크기·벌크 크기)는 프리미티브 하나 고칠 때 4곳을
-            /// 맞춰 고쳐야 했고, 하나라도 어긋나면 읽기·쓰기가 조용히 불일치하는 와이어 표류 버그 클래스였다
-            /// (2026-09-08 구조 감사 FINDING 2). 문자열은 가변 길이라 고정·벌크 모두 -1, 불리언(패킹 불가)과
-            /// decimal(20바이트 표현 가능 — 런타임 16바이트 GetBits 고정과 달라 안전하지 않음)은 고정 크기만 있다.
+            /// Single source of truth for primitives — read expression, write call format, fixed wire size, and bulk
+            /// copy size in one place. The previous four independent switches (read/write/fixed size/bulk size) had to
+            /// be updated in four places per primitive, and a single mismatch was a wire-drift bug class where reads and
+            /// writes silently disagreed (structural audit FINDING 2, 2026-09-08). String is variable length, so both
+            /// fixed and bulk are -1; boolean (not packable) and decimal (representable as 20 bytes — unsafe, differing
+            /// from the runtime's fixed 16-byte GetBits) have a fixed size only.
             /// </summary>
             static readonly System.Collections.Generic.Dictionary<SpecialType, (string Read, string WriteFormat, int FixedSize, int BulkSize)> PrimitiveWireTable =
                 new System.Collections.Generic.Dictionary<SpecialType, (string, string, int, int)>
@@ -765,7 +775,7 @@ namespace MessageProtocol.CodeGenerator.Generate
                 return false;
             }
 
-            /// <summary>고정 wire size 프리미티브(및 enum). EnsureCapacity 일괄 합산에 사용.</summary>
+            /// <summary>Fixed-wire-size primitives (and enums). Used for the EnsureCapacity bulk sum.</summary>
             public static bool TryGetFixedPrimitiveWireSize(ITypeSymbol typeSymbol, out int size)
             {
                 if (typeSymbol.TypeKind == TypeKind.Enum && typeSymbol is INamedTypeSymbol enumType)
@@ -788,7 +798,7 @@ namespace MessageProtocol.CodeGenerator.Generate
                 return false;
             }
 
-            /// <summary>메모리 블록 복사 대상 요소 타입인지 여부 (불리언·문자열·가변 형식 제외).</summary>
+            /// <summary>Whether the element type is a memory-block copy candidate (excludes boolean, string, and variable-size formats).</summary>
             static bool IsBulkCopyable(ITypeSymbol typeSymbol)
             {
                 if (typeSymbol.TypeKind == TypeKind.Enum && typeSymbol is INamedTypeSymbol enumType)

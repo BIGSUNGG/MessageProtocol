@@ -5,16 +5,18 @@ using Xunit;
 namespace MessageProtocol.Tests;
 
 /// <summary>
-/// KI-30 회귀: 참조 추적 컨텍스트는 `_firstObject is null` 을 **빈 슬롯 sentinel** 로 쓰므로,
-/// null 을 등록하면 슬롯이 차지되지 않아 다음 객체도 id 1 을 받았다(실험 확인: `RegisterObject(null)` → 1,
-/// 이은 `RegisterObject(객체)` → 1). 읽기 쪽도 같아서 `GetObject(1)` 이 백레퍼런스를 다른 인스턴스로 해석했다 —
-/// 예외 없이 객체 그래프가 조용히 손상되므로 공개 경계에서 null 을 거부한다.
-/// 생성 코드는 null 을 `ReferenceKind.Null` 로 먼저 걸러 이 경로를 타지 않는다(수동 구현 대상 계약).
+/// KI-30 regression: the reference-tracking contexts use `_firstObject is null` as an **empty-slot sentinel**, so
+/// registering null left the slot unoccupied and the next object also received id 1 (experimentally confirmed:
+/// `RegisterObject(null)` → 1, then `RegisterObject(obj)` → 1 again). The read side mirrored this, so
+/// `GetObject(1)` resolved a back-reference to the wrong instance — the object graph corrupted silently with
+/// no exception — hence null is rejected at the public boundary.
+/// Generated code filters nulls out as `ReferenceKind.Null` first and never hits this path (the contract for
+/// hand-written implementations).
 /// </summary>
 public class ReferenceContextTests
 {
     [Fact]
-    public void SerializeContext는_null_등록을_거부한다()
+    public void serialize_context_rejects_null_registration()
     {
         var context = default(MessageSerializer.SerializeContext);
 
@@ -22,7 +24,7 @@ public class ReferenceContextTests
     }
 
     [Fact]
-    public void SerializeContext는_null_id_조회를_거부한다()
+    public void serialize_context_rejects_null_id_lookup()
     {
         var context = default(MessageSerializer.SerializeContext);
 
@@ -30,7 +32,7 @@ public class ReferenceContextTests
     }
 
     [Fact]
-    public void DeserializeContext는_null_등록을_거부한다()
+    public void deserialize_context_rejects_null_registration()
     {
         var context = default(MessageSerializer.DeserializeContext);
 
@@ -38,7 +40,7 @@ public class ReferenceContextTests
     }
 
     [Fact]
-    public void 거부_후에도_컨텍스트는_오염되지_않고_정상_사용된다()
+    public void context_remains_unpoisoned_and_usable_after_a_rejection()
     {
         var context = default(MessageSerializer.SerializeContext);
         Assert.Throws<ArgumentNullException>(() => context.RegisterObject(null!));
@@ -51,16 +53,16 @@ public class ReferenceContextTests
     }
 
     [Fact]
-    public void 정상_경로_id_발급과_승격_백레퍼런스_복원은_그대로_동작한다()
+    public void normal_path_id_assignment_and_promoted_backreference_restoration_still_work()
     {
-        // 가드가 빈 슬롯 sentinel·Dictionary 승격 경로를 깨지 않았는지 고정한다.
+        // Pins that the guard did not break the empty-slot sentinel or the Dictionary promotion path.
         var first = new object();
         var second = new object();
         var third = new object();
 
         var write = default(MessageSerializer.SerializeContext);
         Assert.Equal(1, write.RegisterObject(first));
-        Assert.Equal(2, write.RegisterObject(second));   // 두 번째 등록에서 Dictionary 로 승격
+        Assert.Equal(2, write.RegisterObject(second));   // promotes to Dictionary on the second registration
         Assert.Equal(3, write.RegisterObject(third));
 
         Assert.True(write.TryGetObjectId(first, out int firstId));
@@ -79,16 +81,17 @@ public class ReferenceContextTests
     }
 }
 
-// ---------- 베이스 타입 멤버 공유 백레퍼런스 판독 (감사 원장 HIGH — 2026-09-07 실험·완화 고정) ----------
+// ---------- Back-reference reads with base-type member sharing (audit ledger HIGH — 2026-09-07 experiment & mitigation pin) ----------
 
 public class SharedBaseBackReferenceTests
 {
     [Fact]
-    public void 베이스_파생_멤버로_같은_인스턴스를_공유하면_안내_InvalidDataException으로_거부된다()
+    public void instance_shared_across_base_and_derived_members_is_rejected_with_informative_invaliddatexception()
     {
-        // 실험(2026-09-07, 2.2.0 생성 코드): 구체 베이스 멤버(EventBase)가 먼저 베이스 필드만 기록하고 인스턴스를
-        // 등록하면, 파생 멤버(LoginEvent)의 백레퍼런스 판독은 등록된 EventBase 인스턴스를 LoginEvent 로 캐스트한다.
-        // 수정 전은 원인을 알려주지 않는 InvalidCastException — 이제 상황과 해법을 안내하는 InvalidDataException.
+        // Experiment (2026-09-07, 2.2.0 generated code): when a concrete base member (EventBase) wrote only the
+        // base fields and registered the instance first, the back-reference read for the derived member
+        // (LoginEvent) cast the registered EventBase instance to LoginEvent. Pre-fix this surfaced as an
+        // InvalidCastException with no cause — now an InvalidDataException explains the situation and the fix.
         var login = new LoginEvent { Timestamp = 5, User = "kim" };
         var host = new SharedBaseDerivedHost { First = login, Second = login };
 
@@ -103,26 +106,28 @@ public class SharedBaseBackReferenceTests
     }
 
     [Fact]
-    public void 베이스_멤버_2곳_공유는_조용한_타입_좁힘으로_복원된다_현재_동작_고정()
+    public void sharing_across_two_base_members_restores_via_silent_type_narrowing_current_behavior_pinned()
     {
-        // KI-34 제약 고정: 두 멤버가 모두 베이스 타입이면 예외 없이 왕복하지만 파생 필드(User)는 유실되고
-        // 두 멤버가 같은 **베이스** 인스턴스를 공유한다. 전체 해결은 와이어 변경(중첩 메시지 디스패치)이 필요해
-        // 정책 결정 사항 — 다형이 필요하면 루트를 abstract 로 선언해 런타임 디스패치로 보낸다(MSGPROT012 안내).
+        // KI-34 constraint pin: when both members are of base type the frame round-trips without exception,
+        // but the derived field (User) is lost and both members share the same **base** instance. A full fix
+        // needs a wire change (nested message dispatch) and is a policy decision — for polymorphism, declare
+        // the root abstract and send via runtime dispatch (see the MSGPROT012 guidance).
         var login = new LoginEvent { Timestamp = 5, User = "kim" };
         var host = new SharedBaseBaseHost { First = login, Second = login };
 
         var back = MessageSerializer.Deserialize<SharedBaseBaseHost>(MessageSerializer.Serialize(host));
 
-        Assert.Equal(5L, back.First!.Timestamp);          // 베이스 필드는 유지
-        Assert.IsType<EventBase>(back.First);             // 파생이 아니라 베이스 인스턴스로 복원 = User 유실
-        Assert.Same(back.First, back.Second);             // 참조 동일성은 유지(2.2.0, KI-9)
+        Assert.Equal(5L, back.First!.Timestamp);          // base fields survive
+        Assert.IsType<EventBase>(back.First);             // restored as the base, not the derived instance = User lost
+        Assert.Same(back.First, back.Second);             // reference identity preserved (2.2.0, KI-9)
     }
 
     [Fact]
-    public void 디스패치_멤버와_구체_멤버로_같은_인스턴스를_공유하면_파생_필드까지_복원된다()
+    public void instance_shared_across_dispatch_and_concrete_members_is_restored_including_derived_fields()
     {
-        // 대조군: 첫 등장이 런타임 디스패치(추상 멤버)면 구체 타입이 헤더째 기록되므로, 이후 어떤 멤버의
-        // 백레퍼런스도 온전한 구체 인스턴스를 받는다 — KI-24 디스패치와 KI-9 참조 추적의 정상 조합.
+        // Control group: when the first occurrence goes through runtime dispatch (abstract member), the
+        // concrete type is written with its header, so every later member's back-reference receives the full
+        // concrete instance — the healthy combination of KI-24 dispatch and KI-9 reference tracking.
         var start = new StartCommand { Seq = 9, Target = "t" };
         var host = new SharedDispatchConcreteHost { Command = start, Concrete = start };
 
@@ -136,27 +141,28 @@ public class SharedBaseBackReferenceTests
 }
 
 
-// ---------- 알 수 없는 참조 태그 거부 (신뢰 경계 — 2026-09-08 감사) ----------
+// ---------- Unknown reference tag rejection (trust boundary — 2026-09-08 audit) ----------
 
 /// <summary>
-/// 참조 태그 바이트는 규격상 0(Null)·1(NewObject)·2(BackReference) 뿐이다. 수정 전 생성 코드는
-/// 그 외의 값(3–255)을 조용히 NewObject 로 해석해 손상·변조 프레임을 파싱했다(프레임 역동기화로
-/// 공격자가 만든 형태의 객체로 복원됨). 세 읽기 경로(그래프 내부·외부 위임·런타임 디스패치) 모두
-/// 이제 즉시 InvalidDataException 으로 거부한다.
+/// By spec the reference tag byte is only 0 (Null), 1 (NewObject), or 2 (BackReference). Pre-fix generated code
+/// interpreted every other value (3–255) silently as NewObject, parsing corrupted/tampered frames (a frame
+/// desynchronized by an attacker is reconstituted as attacker-shaped objects). All three read paths (in-graph,
+/// out-of-graph delegation, runtime dispatch) now reject immediately with InvalidDataException.
 /// </summary>
 public class UnknownReferenceKindTests
 {
     static byte[] SerializeWithLeadingReferenceMember<T>(T host) where T : class
     {
         var bytes = MessageSerializer.Serialize(host);
-        // 루트 헤더(임베디드 id 4바이트) 뒤 첫 바이트가 첫 참조 멤버의 태그(NewObject=1)다 — 레이아웃 고정.
+        // The first byte after the root header (4-byte embedded id) is the first reference member's tag
+        // (NewObject = 1) — layout pin.
         Assert.True(bytes.Length > 4, "Serialized payload is too short to contain a reference tag.");
         Assert.Equal((byte)MessageSerializer.ReferenceKind.NewObject, bytes[4]);
         return bytes;
     }
 
     [Fact]
-    public void 그래프_내부_멤버의_알수없는_참조태그는_즉시_거부된다()
+    public void unknown_reference_tag_on_in_graph_member_is_rejected_immediately()
     {
         var host = new SharedBaseBaseHost { First = new LoginEvent { Timestamp = 1, User = "u" } };
         var bytes = SerializeWithLeadingReferenceMember(host);
@@ -171,7 +177,7 @@ public class UnknownReferenceKindTests
     }
 
     [Fact]
-    public void 그래프_밖_위임_멤버의_알수없는_참조태그는_즉시_거부된다()
+    public void unknown_reference_tag_on_out_of_graph_delegated_member_is_rejected_immediately()
     {
         var host = new SharedOutOfGraphHost { First = new MessageProtocol.NetStandardFixtures.FallbackCollections() };
         var bytes = SerializeWithLeadingReferenceMember(host);
@@ -183,7 +189,7 @@ public class UnknownReferenceKindTests
     }
 
     [Fact]
-    public void 런타임_디스패치_멤버의_알수없는_참조태그는_즉시_거부된다()
+    public void unknown_reference_tag_on_runtime_dispatch_member_is_rejected_immediately()
     {
         var host = new SharedDispatchConcreteHost { Command = new StartCommand { Seq = 1, Target = "t" } };
         var bytes = SerializeWithLeadingReferenceMember(host);
@@ -195,9 +201,9 @@ public class UnknownReferenceKindTests
     }
 
     [Fact]
-    public void 정상_태그_왕복은_그대로_동작한다()
+    public void legitimate_tags_still_round_trip()
     {
-        // 가드가 합법 프레임(0/1/2)을 깨지 않는지 고정 — 세 경로 대표 1개씩 왕복.
+        // Pins that the guard does not break legitimate frames (0/1/2) — one round trip per read path.
         var host = new SharedDispatchConcreteHost { Command = new StartCommand { Seq = 7, Target = "t" } };
         var back = MessageSerializer.Deserialize<SharedDispatchConcreteHost>(MessageSerializer.Serialize(host));
         Assert.Equal(7L, Assert.IsType<StartCommand>(back.Command).Seq);

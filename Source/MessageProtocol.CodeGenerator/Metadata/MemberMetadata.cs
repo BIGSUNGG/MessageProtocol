@@ -3,7 +3,7 @@ using Microsoft.CodeAnalysis;
 
 namespace MessageProtocol.CodeGenerator.Metadata
 {
-    /// <summary>직렬화 대상 멤버 하나의 메타데이터.</summary>
+    /// <summary>Metadata for a single serializable member.</summary>
     internal class MemberMetadata
     {
         public ISymbol Symbol { get; }

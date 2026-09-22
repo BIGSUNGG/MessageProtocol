@@ -2,7 +2,7 @@ using MessageProtocol;
 
 namespace SandboxMessages;
 
-// ---------- S1: Standalone — 전체 멤버 타입 ----------
+// ---------- S1: Standalone — all member types ----------
 
 public enum Color : byte { Red, Green, Blue }
 
@@ -34,7 +34,7 @@ public partial class Ping
     public int Seq { get; set; }
 }
 
-// ---------- S3: 그룹 루트/요소 ----------
+// ---------- S3: Group root/element ----------
 
 [Message(MessageKind.Parent, 10)]
 public partial class ShapeRoot
@@ -48,7 +48,7 @@ public partial class Circle : ShapeRoot
     public double Radius { get; set; }
 }
 
-// ---------- S4: 컬렉션 ----------
+// ---------- S4: Collections ----------
 
 [Message(MessageKind.Standalone, 2)]
 public partial class Collections
@@ -60,7 +60,7 @@ public partial class Collections
     public IList<int>? View { get; set; }
 }
 
-// ---------- S5: 중첩 객체·그래프 ----------
+// ---------- S5: Nested objects and graphs ----------
 
 public class NestedPoco
 {
@@ -77,7 +77,7 @@ public partial class TreeNode
     public NestedPoco? Poco { get; set; }
 }
 
-// ---------- S6: 멤버 제어 ----------
+// ---------- S6: Member control ----------
 
 [Message(MessageKind.Standalone, 4)]
 public partial class MemberControl
@@ -94,9 +94,9 @@ public partial class MemberControl
     public int GetHidden() => _hidden;
 }
 
-// ---------- S10: 제네릭 메시지 ----------
-// GenericMessage 구성 선언: 직렬화 지원 구성과 클래스 ID 명시.
-// 선언된 구성은 송수신 양쪽에서 모듈 로드 시 자동 등록된다.
+// ---------- S10: Generic message ----------
+// GenericMessage construction declarations: declare each supported closed construction with its class ID.
+// Declared constructions are auto-registered on module load on both the sending and receiving side.
 [Message(MessageKind.Standalone, 40)]
 [GenericMessage(typeof(Envelope<AllPrimitives>), ClassId = 1)]
 [GenericMessage(typeof(Envelope<Circle>), ClassId = 2)]
@@ -107,9 +107,10 @@ public partial class Envelope<T>
     public List<T?>? Items { get; set; }
 }
 
-// ---------- S13: 추상 그룹 루트 다형 멤버 ----------
-// abstract [Message(MessageKind.Parent)] 는 인스턴스를 만들 수 없어 정적 Serialize/Deserialize 가 생성되지 않는다.
-// 이 타입을 멤버로 쓰면 생성기는 정적 위임 대신 런타임 메시지 디스패치로 *구체* 요소를 헤더째 기록한다.
+// ---------- S13: Abstract group root with polymorphic member ----------
+// An abstract [Message(MessageKind.Parent)] cannot be instantiated, so no static Serialize/Deserialize is generated for it.
+// When this type is used as a member, the generator records the *concrete* element (header included) via runtime
+// message dispatch instead of a static delegate.
 [Message(MessageKind.Parent, 70)]
 public abstract partial class ShapeCommand
 {
@@ -135,21 +136,21 @@ public partial class CommandBatch
     public List<ShapeCommand>? Queue { get; set; }
 }
 
-// ---------- S15: [Message] 자동 선언 (종류 추론·FullName 해시 ID) ----------
+// ---------- S15: Automatic [Message] declaration (kind inference, FullName hash IDs) ----------
 
-[Message]                                   // 파생 [Message] 없음 → Standalone 추론
+[Message]                                   // no [Message] derivatives → inferred as Standalone
 public partial class AutoNote
 {
     public string? Text { get; set; }
 }
 
-[Message]                                   // AutoJoin/AutoLeave 파생 존재 → GroupRoot 추론
+[Message]                                   // AutoJoin/AutoLeave derivatives exist → inferred as GroupRoot
 public partial class AutoEvent
 {
     public long Timestamp { get; set; }
 }
 
-[Message]                                   // 메시지 속성 조상 상속 → GroupElement 추론
+[Message]                                   // message attribute inherited from an ancestor → inferred as GroupElement
 public partial class AutoJoin : AutoEvent
 {
     public int PlayerId { get; set; }

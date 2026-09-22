@@ -5,15 +5,15 @@ namespace MessageProtocol.Serialize
 {
     public static partial class MessageSerializer
     {
-        /// <summary>제네릭 hot path 가 호출하는 ref 기반 직렬화 델리게이트.</summary>
+        /// <summary>Ref-based serialize delegate called by the generic hot path.</summary>
         public delegate void TypedSerializeRefAction<T>(T message, ref MessageBufferWriter writer);
 
-        /// <summary>제네릭 hot path 가 호출하는 ref 기반 역직렬화 델리게이트.</summary>
+        /// <summary>Ref-based deserialize delegate called by the generic hot path.</summary>
         public delegate T TypedDeserializeRefFunc<T>(ref MessageBufferReader reader);
 
         /// <summary>
-        /// <see cref="SerializerCache{T}"/> cctor 보다 먼저 델리게이트를 심기 위한 홀더.
-        /// 별도 타입이라 Prefill 중에는 캐시 cctor 가 돌지 않는다.
+        /// Holder for planting delegates before the <see cref="SerializerCache{T}"/> cctor runs.
+        /// Being a separate type, it does not trigger the cache's cctor during Prefill.
         /// </summary>
         static class SerializerCachePrefill<T>
         {
@@ -24,30 +24,30 @@ namespace MessageProtocol.Serialize
             public static uint MessageId;
             public static bool HasId;
 
-            // volatile = release store. cctor 는 이 플래그만 보고 나머지 필드를 읽으므로 publication 을 여기에 묶어,
-            // 동시 cctor 가 IsSet=true 만 보고 델리게이트는 아직 null 인 **찢어진 상태**를 캐시에 고정하는 것을 막는다
-            // (x86 에서는 관찰이 어렵지만 Unity ARM 은 store-store 재배열이 가능 — Known-Issues KI-11).
+            // volatile = release store. The cctor reads only this flag before the other fields, so publication is tied here to
+            // stop a concurrent cctor from seeing only IsSet=true and freezing a **torn state** (delegates still null) into the cache
+            // (hard to observe on x86, but Unity ARM can reorder store-store — Known-Issues KI-11).
             public static volatile bool IsSet;
         }
 
         /// <summary>
-        /// 타입 인자 전용 정적 캐시. 등록 시 Prefill 되면 리플렉션 없이 채워지고,
-        /// 그렇지 않으면 첫 접근 시 1회 리플렉션으로 채워진다.
+        /// Per-type-argument static cache. Filled without reflection when prefilled at registration,
+        /// or by one-time reflection on first access otherwise.
         /// <para>
-        /// 필드는 <c>readonly</c> 가 아니고 cctor 는 **절대 던지지 않는다** — 둘 다 같은 이유다. cctor 가 던지면 CLR 이
-        /// 그 실패를 타입별로 영구 캐싱해 이후 성공적인 델리게이트 등록으로도 복구할 수 없고(`TypeInitializationException`),
-        /// readonly 면 등록 전 조기 접근으로 cctor 가 먼저 돌았을 때 Prefill 이 영원히 무시된다 (Known-Issues KI-11).
-        /// 미해결 멤버는 null 로 남고 사용 지점에서 명확한 메시지로 보고한다.
+        /// Fields are not <c>readonly</c> and the cctor **never throws** — for the same reason. If the cctor threw, the CLR would
+        /// cache that failure per type permanently, unrecoverable by any later successful delegate registration (`TypeInitializationException`);
+        /// if the fields were readonly, early access before registration would run the cctor first and the Prefill would be ignored forever (Known-Issues KI-11).
+        /// Unresolved members stay null and are reported with clear messages at their use sites.
         /// </para>
         /// </summary>
         internal static class SerializerCache<T>
         {
-            // volatile(KI-39): 등록 전 조기 접근으로 cctor 가 먼저 돈 타입은 **복구 블록**(PrefillSerializerCache)이
-            // 이 필드들을 cctor 밖에서 다시 쓴다. 복구 쓰기는 마지막에 `Serialize` 를 release 로 발행하지만,
-            // `Deserialize` 만 읽는 핫 경로(Deserialize<T>)는 그 release 와 짝이 없어 ARM(Unity)에서 **등록 완료 후에도
-            // 오래된 null** 을 읽어 false ThrowMissingDeserialize / MessageId=0 을 볼 수 있었다. 필드 전체를
-            // volatile 로 만들면 각 필드의 쓰기는 release·읽기는 acquire 가 되어 위치별 동기화 쌍이 성립한다.
-            // 비용: ARM64 acquire load ≈ 1사이클(LDAR), x86 무료 — 핫 경로에서 무시 가능.
+            // volatile (KI-39): for types whose cctor ran first via early access before registration, the **recovery block**
+            // (PrefillSerializerCache) rewrites these fields from outside the cctor. That recovery writes publish `Serialize`
+            // with release semantics last, but hot paths that read only `Deserialize` (Deserialize<T>) do not pair with that release,
+            // so on ARM (Unity) they could read a **stale null** even after registration completed, causing false ThrowMissingDeserialize or MessageId=0.
+            // Making every field volatile gives each write release and each read acquire semantics, so per-location synchronization pairs hold.
+            // Cost: ARM64 acquire load ≈ 1 cycle (LDAR), free on x86 — negligible in the hot path.
             public static volatile TypedSerializeRefAction<T>? Serialize;
             public static volatile TypedDeserializeRefFunc<T>? Deserialize;
             public static volatile Func<T, byte[]>? SerializeBytes;
@@ -70,8 +70,8 @@ namespace MessageProtocol.Serialize
 
                 Type type = typeof(T);
 
-                // 찾지 못한 멤버는 null 로 남긴다 — 여기서 던지면 CLR 이 타입별 초기화 실패를 영구 캐싱해
-                // 이후 델리게이트 등록으로도 복구 불가능한 TypeInitializationException 이 된다 (KI-11).
+                // Leave unfound members null — throwing here would make the CLR permanently cache the per-type
+                // initialization failure, becoming a TypeInitializationException that no later delegate registration can recover from (KI-11).
                 Serialize = TryCreateDelegate<TypedSerializeRefAction<T>>(TryResolveSerializeRefMethod(type));
                 SerializeBytes = TryCreateDelegate<Func<T, byte[]>>(TryResolveSerializeBytesMethod(type));
                 Deserialize = TryCreateDelegate<TypedDeserializeRefFunc<T>>(TryResolveDeserializeRefMethod(type));
@@ -85,7 +85,7 @@ namespace MessageProtocol.Serialize
             }
         }
 
-        /// <summary>리플렉션으로 찾은 static 멤버를 델리게이트로 만든다. 멤버가 없으면 null (cctor 비던짐 규약).</summary>
+        /// <summary>Creates a delegate from a static member found via reflection. Returns null when the member is absent (the cctor-never-throws rule).</summary>
         static TDelegate? TryCreateDelegate<TDelegate>(MethodInfo? method) where TDelegate : class
         {
             return method is null ? null : (TDelegate)(object)method.CreateDelegate(typeof(TDelegate));
@@ -94,7 +94,7 @@ namespace MessageProtocol.Serialize
         static readonly Type ByRefBufferWriterType = typeof(MessageBufferWriter).MakeByRefType();
         static readonly Type ByRefBufferReaderType = typeof(MessageBufferReader).MakeByRefType();
 
-        /// <summary>`static void Serialize(T, ref MessageBufferWriter)` 를 찾는다. 없으면 null — cctor 가 던지면 CLR 이 실패를 영구 캐싱한다 (KI-11).</summary>
+        /// <summary>Finds `static void Serialize(T, ref MessageBufferWriter)`. Returns null when absent — if the cctor threw, the CLR would cache the failure permanently (KI-11).</summary>
         static MethodInfo? TryResolveSerializeRefMethod(Type type)
         {
             foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Static))
@@ -128,7 +128,7 @@ namespace MessageProtocol.Serialize
             return null;
         }
 
-        /// <summary>`static byte[] Serialize(T)` 를 찾는다. 없으면 null (사유는 <see cref="TryResolveSerializeRefMethod"/> 와 동일).</summary>
+        /// <summary>Finds `static byte[] Serialize(T)`. Returns null when absent (same rationale as <see cref="TryResolveSerializeRefMethod"/>).</summary>
         static MethodInfo? TryResolveSerializeBytesMethod(Type type)
         {
             foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Static))

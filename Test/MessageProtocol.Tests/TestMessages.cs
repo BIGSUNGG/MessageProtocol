@@ -3,7 +3,7 @@ using MessageProtocol.NetStandardFixtures;
 
 namespace MessageProtocol.Tests.Fixtures;
 
-// ---------- 라운드트립 ----------
+// ---------- Round trips ----------
 
 public enum Level : short { Low = -1, Mid = 0, High = 1 }
 
@@ -89,7 +89,7 @@ public partial class MemberControlMessage
     public int GetInternal() => _internal;
 }
 
-// ---------- 상속/그룹 ----------
+// ---------- Inheritance / groups ----------
 
 [Message(MessageKind.Parent, 110)]
 public partial class EventBase
@@ -109,7 +109,7 @@ public partial class LogoutEvent : EventBase
     public int Reason { get; set; }
 }
 
-// ---------- 수동 구현 ----------
+// ---------- Manual implementations ----------
 
 public class ManualStandalone : MessageProtocol.Serialize.IHasIdMessageSerializable<ManualStandalone>
 {
@@ -155,13 +155,13 @@ public class ManualStandalone : MessageProtocol.Serialize.IHasIdMessageSerializa
     }
 }
 
-// 계약 미구현 타입 (등록 실패 검증용)
+// Type without a contract implementation (for registration-failure verification)
 public class NotAMessage
 {
     public int Value { get; set; }
 }
 
-// ---------- 제네릭 ----------
+// ---------- Generics ----------
 
 [Message(MessageKind.Standalone, 120)]
 [GenericMessage(typeof(GenericEnvelope<FlatMessage>), ClassId = 1)]
@@ -188,7 +188,7 @@ public partial class GenericPair<T>
     public int Tag { get; set; }
 }
 
-// 동일 제네릭 페이로드의 두 구성이 한 그래프에 공존 — 헬퍼 이름 충돌 회귀 픽스처
+// Two constructions of the same generic payload coexisting in one graph — helper name collision regression fixture
 [Message(MessageKind.Standalone, 123)]
 public partial class DuplicateGenericPayloadsMessage
 {
@@ -196,41 +196,41 @@ public partial class DuplicateGenericPayloadsMessage
     public GenericPair<string>? TextPair { get; set; }
 }
 
-// 구성 선언이 없는 제네릭 메시지 — 직렬화 시 예외 검증용 (구성 선언 필수 규칙)
+// Generic message without a construction declaration — for verifying the exception on serialization (construction declarations are required)
 [Message(MessageKind.Standalone, 122)]
 public partial class UnregisteredGeneric<T>
 {
     public int X { get; set; }
 }
 
-// ---------- 분산 선언 ----------
+// ---------- Distributed declarations ----------
 
-// 선언부를 수정하지 않고 별도 캐리어 타입으로 GenericEnvelope 의 추가 구성을 선언한다.
+// Declares an additional construction of GenericEnvelope via a separate carrier type, without touching the declaration.
 [GenericMessage(typeof(GenericEnvelope<PointMessage>), ClassId = 3)]
 static class GenericEnvelopeExtraConstructions { }
 
-// ---------- 중첩 깊이 가드 (KI-14) ----------
+// ---------- Nesting depth guard (KI-14) ----------
 
-// 자기참조 체인 — 작은 프레임에 깊은 중첩을 담아 재귀 스택을 소진시키는 적대 페이로드의 최소 형태.
-// 와이어: 헤더 4바이트 + 수준당 ReferenceKind.NewObject 1바이트 + 종단 Null 1바이트.
+// Self-referencing chain — the minimal form of a hostile payload that packs deep nesting into a small frame to exhaust the recursion stack.
+// Wire: 4-byte header + 1 byte ReferenceKind.NewObject per level + 1 terminating Null byte.
 [Message(MessageKind.Standalone, 124)]
 public partial class ChainMessage
 {
     public ChainMessage? Next { get; set; }
 }
 
-// 깊이가 아니라 *개수*로 중첩 객체를 많이 담는 픽스처 — 깊이 카운터가 짝 맞게 감소(Leave)하는지 검증한다.
+// Fixture that packs many nested objects by *count* rather than depth — verifies the depth counter decrements in matching pairs (Leave).
 [Message(MessageKind.Standalone, 125)]
 public partial class WideChainMessage
 {
     public List<ChainMessage>? Items { get; set; }
 }
 
-// ---------- 추상 그룹 루트 다형 멤버 (KI-24) ----------
+// ---------- Abstract group root polymorphic member (KI-24) ----------
 
-// abstract [Message(MessageKind.Parent)] 는 다형 그룹의 자연스러운 선언 형태지만 생성기는 인스턴스를 만들 수 없어
-// 정적 Serialize/Deserialize 를 방출하지 않는다 — 멤버 타입으로 쓰이면 런타임 메시지 디스패치로
-// *구체* 요소가 헤더째 기록되어야 한다 (정적 위임은 소비자 빌드를 CS0117 로 깨뜨렸다).
+// abstract [Message(MessageKind.Parent)] is the natural declaration for a polymorphic group, but the generator cannot instantiate it
+// and emits no static Serialize/Deserialize — when used as a member type, the *concrete* element must be recorded with its header
+// via runtime message dispatch (static delegation broke consumer builds with CS0117).
 [Message(MessageKind.Parent, 126)]
 public abstract partial class AbstractCommand
 {
@@ -256,33 +256,33 @@ public partial class CommandEnvelope
     public List<AbstractCommand>? History { get; set; }
 }
 
-// 런타임 디스패치 멤버(추상 메시지 타입)를 통한 순환 그래프 픽스처 — 디스패치 경로는 백레퍼런스를
-// 추적하지 않으므로 이 멤버로 돌아가는 순환은 쓰기 재귀를 무한히 깊게 만든다 (KI-25).
+// Circular graph fixture through a runtime-dispatch member (abstract message type) — the dispatch path does not track
+// back-references, so a cycle leading back through this member would make write recursion infinitely deep (KI-25).
 [Message(MessageKind.Child, 130)]
 public partial class WrapCommand : AbstractCommand
 {
     public CommandEnvelope? Inner { get; set; }
 }
 
-// ---------- 등록 캐시 강건성 (KI-11) ----------
+// ---------- Registration cache robustness (KI-11) ----------
 
-// 계약 마커만 구현하고 정적 계약 멤버가 없는 타입 — 리플렉션 경로가 아무것도 찾지 못한다.
-// 등록 전 조기 접근이 캐시를 영구히 망가뜨리지 않는지 검증하는 픽스처(두 테스트가 읽기만 하므로 순서 무관).
+// Type implementing only the contract marker, with no static contract members — the reflection path finds nothing.
+// Fixture for verifying that early access before registration does not permanently break the cache (both tests only read, so order is irrelevant).
 public class UnregisteredContractMessage : MessageProtocol.Serialize.IMessageSerializable<UnregisteredContractMessage>
 {
     public int Value { get; set; }
 }
 
-// 동일 형태이지만 테스트 안에서 조기 접근 → 델리게이트 등록 순서로 복구되는지 검증하는 픽스처.
+// Same shape, but verifies recovery in the early access → delegate registration order inside a test.
 public class LateBoundMessage : MessageProtocol.Serialize.IMessageSerializable<LateBoundMessage>
 {
     public int Value { get; set; }
 }
 
-// ---------- 컬렉션 쓰기 스냅샷 (KI-26) ----------
+// ---------- Collection write snapshot (KI-26) ----------
 
-// 컬렉션 프로퍼티 게터 호출 횟수를 세는 픽스처 — 생성 코드가 길이 접두·루프 조건·요소 접근마다
-// 멤버를 다시 평가하는지(게터 2N+2회) 한 번만 스냅샷하는지(1회)를 실행으로 검증한다.
+// Fixture that counts collection property getter invocations — executes whether the generated code re-evaluates the member
+// for the length prefix, loop condition, and each element access (getter 2N+2 times) or snapshots it once.
 [Message(MessageKind.Standalone, 131)]
 public partial class SnapshotCollectionMessage
 {
@@ -295,7 +295,7 @@ public partial class SnapshotCollectionMessage
     [MessageIgnore]
     public int TagsGetterCalls { get; set; }
 
-    // IList<T> 선언 — CollectionsMarshal 고속 경로를 타지 않으므로 인덱서 루프 변형이 사용된다.
+    // Declared as IList<T> — misses the CollectionsMarshal fast path, so the indexer-loop variant is used.
     public IList<int> Codes
     {
         get { CodesGetterCalls++; return _codes; }
@@ -309,11 +309,11 @@ public partial class SnapshotCollectionMessage
     }
 }
 
-// ---------- 구체 베이스 멤버의 파생 필드 유실 (KI-29) ----------
+// ---------- Derived field loss on concrete base members (KI-29) ----------
 
-// 의도적으로 MSGPROT012 를 발생시키는 픽스처 — 현재 동작(선언 타입 기준 직렬화 → 파생 멤버 유실)을
-// 실행으로 고정한다. 다형이 필요하면 루트를 abstract 로 선언해 런타임 디스패치(KI-24)로 해결하며,
-// 이 픽스처처럼 의도적으로 베이스 필드만 보낼 때는 #pragma 로 경고를 끄면 된다(억제 수단 검증 포함).
+// Fixture that intentionally triggers MSGPROT012 — pins the current behavior (declared-type serialization → derived member loss)
+// by execution. When polymorphism is needed, declare the root abstract and rely on runtime dispatch (KI-24);
+// when intentionally sending only the base field like this fixture, silence the warning with #pragma (also verifies the suppression means).
 #pragma warning disable MSGPROT012
 [Message(MessageKind.Standalone, 132)]
 public partial class EventHost
@@ -322,10 +322,10 @@ public partial class EventHost
 }
 #pragma warning restore MSGPROT012
 
-// ---------- 디스패치 멤버 공유 참조 (KI-9 해소) ----------
+// ---------- Shared references through dispatch members (KI-9 resolution) ----------
 
-// 그래프 밖(다른 어셈블리) 구체 메시지를 두 멤버에 걸쳐 공유하는 픽스처 — NetStandardFixtures 의
-// 메시지 타입이라 Tests 어셈블리 그래프 밖 위임 경로(EmitOutOfGraphMessage*)를 탄다.
+// Fixture sharing a concrete out-of-graph (other-assembly) message across two members — a NetStandardFixtures message type,
+// so it takes the Tests assembly's out-of-graph delegation path (EmitOutOfGraphMessage*).
 [Message(MessageKind.Standalone, 133)]
 public partial class SharedOutOfGraphHost
 {
@@ -333,10 +333,10 @@ public partial class SharedOutOfGraphHost
     public FallbackCollections? Second { get; set; }
 }
 
-// ---------- 등록 검증 순서 (KI-11 잔존) ----------
+// ---------- Registration validation order (KI-11 residue) ----------
 
-// 거부된 등록 후 재등록 복구 검증용 수동 메시지 — 어느 테스트에서도 먼저 등록·접근하지 않는다
-// (첫 접근이 "거부되는 등록"이어야 캐시 오염 여부가 관찰된다).
+// Manual message for verifying recovery via re-registration after a rejection — no test registers or touches it first
+// (the first access must be the "rejected registration" so cache corruption is observable).
 public class ManualIdMessage : MessageProtocol.Serialize.IHasIdMessageSerializable<ManualIdMessage>
 {
     public int Value { get; set; }
@@ -381,7 +381,7 @@ public class ManualIdMessage : MessageProtocol.Serialize.IHasIdMessageSerializab
     }
 }
 
-// NonId 플래그가 박힌 id 로 HasId 등록을 시도하는 거부 검증용 — 성공 등록이 없어 테스트 순서와 무관하다.
+// Rejection fixture attempting a HasId registration with a NonId-flagged id — no successful registration, so test order is irrelevant.
 public class ManualFlagProbeMessage : MessageProtocol.Serialize.IHasIdMessageSerializable<ManualFlagProbeMessage>
 {
     public int Value { get; set; }
@@ -426,11 +426,11 @@ public class ManualFlagProbeMessage : MessageProtocol.Serialize.IHasIdMessageSer
     }
 }
 
-// ---------- 베이스 타입 멤버 공유 백레퍼런스 판독 (감사 원장 HIGH — 실험 고정) ----------
+// ---------- Shared base-type member back-reference reads (audit ledger HIGH — experiment pin) ----------
 
-// 같은 파생 인스턴스를 구체 베이스 멤버(EventBase)와 파생 멤버(LoginEvent) 양쪽에 공유한다.
-// 쓰기는 First(베이스)가 베이스 필드만 기록하고 인스턴스를 등록 → Second(파생)는 백레퍼런스.
-// 읽기는 First 가 EventBase 인스턴스를 만들어 등록하므로 Second 의 파생 캐스트가 실패한다(KI-35).
+// Shares the same derived instance between a concrete base member (EventBase) and a derived member (LoginEvent).
+// Writing: First (base) records only the base fields and registers the instance → Second (derived) is a back-reference.
+// Reading: First creates and registers an EventBase instance, so Second's derived cast fails (KI-35).
 #pragma warning disable MSGPROT012
 [Message(MessageKind.Standalone, 134)]
 public partial class SharedBaseDerivedHost
@@ -439,7 +439,7 @@ public partial class SharedBaseDerivedHost
     public LoginEvent? Second { get; set; }
 }
 
-// 베이스 멤버 2곳 — 예외 없이 파생 필드가 유실되고 두 멤버가 같은 베이스 인스턴스를 공유한다(조용한 타입 좁힘).
+// Two base members — derived fields are lost without exceptions and both members share the same base instance (silent type narrowing).
 [Message(MessageKind.Standalone, 135)]
 public partial class SharedBaseBaseHost
 {
@@ -448,8 +448,8 @@ public partial class SharedBaseBaseHost
 }
 #pragma warning restore MSGPROT012
 
-// 대조군: 같은 인스턴스를 추상 멤버(런타임 디스패치 — 구체 타입이 헤더째 기록)와 구체 멤버로 공유하면
-// 파생 필드까지 온전히 복원된다. 베이스 *구체* 멤버의 선언 타입 기록(KI-29)과의 차이를 고정한다.
+// Control group: sharing the same instance between an abstract member (runtime dispatch — the concrete type is recorded with its header)
+// and a concrete member restores the derived fields intact. Pins the difference from a *concrete* base member's declared-type recording (KI-29).
 [Message(MessageKind.Standalone, 136)]
 public partial class SharedDispatchConcreteHost
 {
@@ -457,9 +457,9 @@ public partial class SharedDispatchConcreteHost
     public StartCommand? Concrete { get; set; }
 }
 
-// ---------- 동시 등록 경쟁 (KI-38) ----------
+// ---------- Concurrent registration races (KI-38) ----------
 
-// 클레임 선점 등록 검증용 수동 메시지 — 어느 테스트에서도 먼저 등록하지 않는다(경쟁 테스트가 최초 등록).
+// Manual message for claim-preemption registration verification — no test registers it first (the race test performs the first registration).
 public class ManualRaceMessage : MessageProtocol.Serialize.IHasIdMessageSerializable<ManualRaceMessage>
 {
     public int Value { get; set; }
@@ -504,7 +504,7 @@ public class ManualRaceMessage : MessageProtocol.Serialize.IHasIdMessageSerializ
     }
 }
 
-// 클레임 롤백 잔류 검증용 — 첫 시도는 남의 MessageId 로 거부되고, 재시도는 자기 id 로 성공해야 한다.
+// Claim-rollback residue verification — the first attempt is rejected with someone else's MessageId; the retry must succeed with its own id.
 public class ManualRollbackMessage : MessageProtocol.Serialize.IHasIdMessageSerializable<ManualRollbackMessage>
 {
     public int Value { get; set; }

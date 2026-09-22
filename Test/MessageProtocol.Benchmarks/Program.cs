@@ -12,8 +12,8 @@ BenchmarkRunner.Run<SerializationBenchmarks>();
 namespace Benchmarks
 {
     /// <summary>
-    /// 저장소에 동명 프로젝트가 두 개 있어(Legacy 포함) 기본 csproj 도구 체인이 실패하므로
-    /// in-process emit 도구 체인을 사용한다.
+    /// Uses the in-process emit toolchain because the repo contains two projects with the same name (including
+    /// Legacy), which breaks the default csproj toolchain.
     /// </summary>
     public class InProcessConfig : ManualConfig
     {
@@ -34,9 +34,9 @@ namespace Benchmarks
     }
 
     /// <summary>
-    /// 문자열 많은 메시지(게임 서버 실제 프로파일: 이름·채팅·ASCII 키). WriteString 용량 산정이
-    /// 3n+3 보수 예약에서 ASCII 정확 산정으로 바뀐 것의 효과를 재는 시나리오다.
-    /// 100자 문자열 4개 — 보수 예약은 4·(4+303)=1,228B, ASCII 실제는 416B.
+    /// A string-heavy message (realistic game-server profile: names, chat, ASCII keys). Measures the effect of
+    /// changing WriteString capacity estimation from a 3n+3 conservative reservation to exact ASCII sizing.
+    /// Four 100-char strings — conservative: 4·(4+303) = 1,228 B, exact ASCII: 416 B.
     /// </summary>
     [Message(MessageKind.Standalone, 2)]
     public partial class StringHeavyMessage
@@ -48,8 +48,9 @@ namespace Benchmarks
     }
 
     /// <summary>
-    /// 참조 추적 그래프 시나리오 — 같은 서브그래프를 두 갈래로 공유해 쓰기·읽기 양쪽에서 백레퍼런스를
-    /// 강제한다(깊이 5·공유 노드 서브트리). 풀링 경로와 함께 기준선 갭이었던 두 경로를 잰다.
+    /// Reference-tracking graph scenario — two branches share the same subgraph, forcing back-references on both
+    /// write and read (depth-5 chain, shared subtree). Benchmarks the two paths that were the baseline gap,
+    /// together with the pooled path.
     /// </summary>
     [Message(MessageKind.Standalone, 3)]
     public partial class GraphNode
@@ -60,8 +61,9 @@ namespace Benchmarks
     }
 
     /// <summary>
-    /// 대형 컬렉션 시나리오(인벤토리·엔티티 일괄 전송 실제 스케일) — `List&lt;int&gt;` 10만 요소는
-    /// CollectionsMarshal 벌크 복사 경로, `string[]` 1천 요소는 요소별 쓰기 경로를 각각 압박한다.
+    /// Large-collection scenario (realistic scale for inventory/entity batch transfers) — `List&lt;int&gt;` with 100k
+    /// elements stresses the CollectionsMarshal bulk-copy path; `string[]` with 1k elements stresses the
+    /// per-element write path.
     /// </summary>
     [Message(MessageKind.Standalone, 4)]
     public partial class LargeCollections
@@ -96,7 +98,7 @@ namespace Benchmarks
             Tag = new string('d', 100),
         };
 
-        // 깊이 5 체인의 끝을 두 갈래가 공유 — 쓰기는 백레퍼런스 태그를, 읽기는 GetObject 역참조를 강제한다.
+        // Both branches share the end of a depth-5 chain — forces back-reference tags on write and GetObject dereference on read.
         static GraphNode BuildSharedGraph()
         {
             GraphNode tail = new() { Label = "leaf" };
@@ -104,7 +106,7 @@ namespace Benchmarks
             {
                 tail = new GraphNode { Label = "n" + i, Left = tail, Right = null };
             }
-            return new GraphNode { Label = "root", Left = tail, Right = tail };   // 같은 서브그래프 공유
+            return new GraphNode { Label = "root", Left = tail, Right = tail };   // same subgraph shared
         }
 
         readonly GraphNode _graphRoot = BuildSharedGraph();
@@ -134,7 +136,7 @@ namespace Benchmarks
         public object DeserializeStringHeavy() => MessageSerializer.Deserialize(_stringBytes);
 
         [Benchmark]
-        public int SerializePooledFlat()   // byte[] 경로(SerializeBytes)와의 할당 대조 — 반환은 소유권 해제 포함
+        public int SerializePooledFlat()   // allocation contrast with the byte[] path (SerializeBytes) — the return includes releasing ownership
         {
             using var pooled = MessageSerializer.SerializePooled(_message);
             return pooled.Length;

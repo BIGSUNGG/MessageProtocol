@@ -2,7 +2,7 @@ using Microsoft.CodeAnalysis;
 
 namespace MessageProtocol.CodeGenerator.Metadata
 {
-    /// <summary>중첩 메시지 타입을 감싸는 컨테이닝 타입 선언 정보 (생성 코드에서 partial 래퍼를 재구성할 때 사용).</summary>
+    /// <summary>Containing-type declaration info wrapping a nested message type (used to rebuild partial wrappers in generated code).</summary>
     internal readonly struct ContainingTypeMetadata
     {
         public TypeDeclarationKind DeclarationKind { get; }

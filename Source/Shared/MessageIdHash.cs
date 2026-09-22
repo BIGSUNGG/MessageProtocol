@@ -6,20 +6,20 @@ namespace MessageProtocol
     internal static class MessageIdHash
 #else
     /// <summary>
-    /// <c>[Message]</c> 자동 MessageId 해시 — 타입 FullName 의 FNV-1a 32비트를 와이어 24비트(<c>0x00FF_FFFF</c>)로 마스크한다.
-    /// 알고리즘과 FullName 문자열 형식은 와이어 호환을 위해 동결되어 있다(변경 시 기존 메시지 ID 전부 무효).
+    /// <c>[Message]</c> automatic MessageId hash — masks the FNV-1a 32-bit hash of the type's FullName to the 24-bit wire range (<c>0x00FF_FFFF</c>).
+    /// Both the algorithm and the FullName string format are frozen for wire compatibility (changing them would invalidate every existing message ID).
     /// </summary>
     public static class MessageIdHash
 #endif
     {
-        /// <summary>FNV-1a 32비트 오프셋 basis.</summary>
+        /// <summary>FNV-1a 32-bit offset basis.</summary>
         public const uint OffsetBasis = 2166136261;
-        /// <summary>FNV-1a 32비트 소수.</summary>
+        /// <summary>FNV-1a 32-bit prime.</summary>
         public const uint Prime = 16777619;
 
         /// <summary>
-        /// FullName(네임스페이스 점 구분 + 중첩 <c>+</c> + 제네릭 차수 <c>`n</c>, BCL <see cref="System.Type.FullName"/> 관례)의
-        /// FNV-1a 32비트 해시를 24비트로 마스크해 반환한다.
+        /// Returns the FNV-1a 32-bit hash of the FullName (namespace dots + nested <c>+</c> + generic arity <c>`n</c>, per the
+        /// BCL <see cref="System.Type.FullName"/> convention), masked to 24 bits.
         /// </summary>
         public static uint FromFullName(string fullName)
         {

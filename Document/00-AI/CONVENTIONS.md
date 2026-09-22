@@ -3,7 +3,7 @@ project: DS_MessageProtocol
 type: context
 status: stable
 tags: [ai, conventions]
-updated: 2026-08-31
+updated: 2026-09-22
 ---
 
 # Conventions
@@ -51,6 +51,14 @@ updated: YYYY-MM-DD
 - `stub`: 섹션만 있는 자리표시
 - `draft`: 초안, 사실 검증 필요
 - `stable`: 합의된 내용
+
+## 코드 주석
+
+- 모든 코드 주석(`//` 및 `///` XML doc)은 **영어로 작성**한다. 라이브러리 소비자가 IntelliSense·예제·테스트에서 그대로 읽는 텍스트이기 때문이다. 배경: [ADR-0008](../05-Decisions/ADR-0008-English-Code-Comments.md)
+- `///`는 소비자 대상 API 계약 — `<summary>` 첫 줄은 완결된 한 문장으로 동작을 서술하고, 예외·경계 동작을 문서화한다.
+- `//`는 코드가 "무엇을" 하는지의 반복이 아니라 "왜" 그렇게 하는지(의도·제약·함정)를 설명한다.
+- 예외: UTF-8/비ASCII 직렬화를 검증하는 테스트 페이로드 문자열(예: `"한글·日本語·🌟"`)은 데이터이므로 유지하며, 옆에 의도를 밝히는 영어 주석을 붙인다.
+- `Document/` 볼트 작성 언어는 이 규약의 대상이 아니다(한국어 유지 — 상단 원칙 참조).
 
 ## 관련
 

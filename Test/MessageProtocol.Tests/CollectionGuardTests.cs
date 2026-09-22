@@ -7,16 +7,16 @@ using Xunit;
 namespace MessageProtocol.Tests;
 
 /// <summary>
-/// KI-13 회귀: 컬렉션 길이·개수 접두사가 남은 바이트를 초과하면 할당 전에 예외를 던져
-/// 악성 패킷의 거대 할당(OOM DoS)을 차단한다.
+/// KI-13 regression: when a collection length/count prefix exceeds the remaining bytes, throw before
+/// allocating, blocking oversized allocations (OOM DoS) from malicious frames.
 /// </summary>
 public class CollectionGuardTests
 {
     [Fact]
-    public void 고정크기_배열_길이가_남은_바이트를_초과하면_할당_전에_예외()
+    public void fixed_size_array_length_exceeding_remaining_bytes_throws_before_allocation()
     {
         byte[] bytes = MessageSerializer.Serialize(new AllTypesMessage { Blob = new byte[] { 1, 2, 3 } });
-        // Blob 길이 접두사(3) + 페이로드 패턴
+        // Blob length prefix (3) + payload pattern
         int offset = FindPattern(bytes, new byte[] { 3, 0, 0, 0, 1, 2, 3 });
         BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(offset), int.MaxValue);
 
@@ -24,10 +24,10 @@ public class CollectionGuardTests
     }
 
     [Fact]
-    public void 고정크기_List_개수가_남은_바이트를_초과하면_할당_전에_예외()
+    public void fixed_size_list_count_exceeding_remaining_bytes_throws_before_allocation()
     {
         byte[] bytes = MessageSerializer.Serialize(new AllTypesMessage { Samples = new List<double> { 1.5, 2.5 } });
-        // 개수(2) + 첫 요소 1.5 의 리틀엔디안 바이트 패턴
+        // count (2) + little-endian bytes of first element 1.5
         int offset = FindPattern(bytes, new byte[] { 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xF8, 0x3F });
         BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(offset), int.MaxValue);
 
@@ -35,10 +35,10 @@ public class CollectionGuardTests
     }
 
     [Fact]
-    public void 가변크기_배열_개수가_남은_바이트를_초과하면_할당_전에_예외()
+    public void variable_size_array_count_exceeding_remaining_bytes_throws_before_allocation()
     {
         byte[] bytes = MessageSerializer.Serialize(new AllTypesMessage { Tags = new[] { "a" } });
-        // 개수(1) + 문자열 "a"(길이 1 + 0x61) 패턴
+        // count (1) + string "a" pattern (length 1 + 0x61)
         int offset = FindPattern(bytes, new byte[] { 1, 0, 0, 0, 1, 0, 0, 0, (byte)'a' });
         BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(offset), int.MaxValue);
 
@@ -46,7 +46,7 @@ public class CollectionGuardTests
     }
 
     [Fact]
-    public void 정상_컬렉션은_가드_도입_후에도_왕복한다()
+    public void well_formed_collections_still_round_trip_after_guard_introduction()
     {
         var msg = new AllTypesMessage
         {

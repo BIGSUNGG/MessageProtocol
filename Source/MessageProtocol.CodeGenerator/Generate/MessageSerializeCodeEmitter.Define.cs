@@ -8,7 +8,7 @@ namespace MessageProtocol.CodeGenerator.Generate
 {
     internal static partial class MessageSerializeCodeEmitter
     {
-        /// <summary>partial 타입 선언 + 상속·인터페이스 + 정적 멤버 배치.</summary>
+        /// <summary>Partial type declaration + base types/interfaces + static member placement.</summary>
         internal static class Define
         {
             public static string Emit(TypeMetadata typeMeta, SerializationGraph serializationGraph, AttributeReferences attributeReferences, EmitState state, IAssemblySymbol? consumerAssembly)
@@ -19,7 +19,7 @@ namespace MessageProtocol.CodeGenerator.Generate
 
                 sb.AppendLine();
 
-                // 컨테이닝 타입 partial 래퍼를 먼저 연다.
+                // Open the containing-type partial wrappers first.
                 foreach (var containingType in typeMeta.ContainingTypes)
                 {
                     sb.AppendLine($"{declarationIndent}partial {containingType.DeclarationKeyword} {containingType.Name}{containingType.TypeParameters}{containingType.Constraints}");
@@ -80,13 +80,13 @@ namespace MessageProtocol.CodeGenerator.Generate
                     parts.Add(baseType.ToDisplayString());
                 }
 
-                // Group / Standalone 은 MessageId 를 프로토콜 식별자로 쓰므로 IHasIdMessageSerializable.
+                // Group / Standalone use MessageId as their protocol identifier, so IHasIdMessageSerializable.
                 bool hasIdInProtocol = typeMeta.IsGroupMessage || typeMeta.IsStandaloneMessage;
                 parts.Add(hasIdInProtocol
                     ? $"IHasIdMessageSerializable<{typeMeta.DeclarationName}>"
                     : $"IMessageSerializable<{typeMeta.DeclarationName}>");
 
-                // 원본 선언의 인터페이스는 생성하는 직렬화 인터페이스와 중복만 제거하고 유지.
+                // Keep the original declaration's interfaces, removing only duplicates of the generated serialization interfaces.
                 foreach (var interfaceType in typeMeta.Symbol.Interfaces)
                 {
                     if (IsGeneratedSerializationInterface(interfaceType, attributeReferences.MessageSerializableInterfaceType, typeMeta.Symbol) ||

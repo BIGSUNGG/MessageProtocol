@@ -2,11 +2,11 @@ using System;
 
 namespace MessageProtocol
 {
-    /// <summary>헤더 하위 니블(0~15) 메시지 카테고리.</summary>
+    /// <summary>Message category in the header's lower nibble (0–15).</summary>
     [Flags]
     public enum MessageCategory : byte
     {
-        /// <summary>기본 카테고리.</summary>
+        /// <summary>Default category.</summary>
         Category0 = 0x00,
         Category1 = 0x01,
         Category2 = 0x02,

@@ -5,22 +5,23 @@ using Xunit;
 namespace MessageProtocol.Tests;
 
 /// <summary>
-/// KI-26 회귀: 컬렉션 멤버 쓰기는 멤버 표현식을 **한 번만** 평가해 로컬로 스냅샷한다.
-/// 이전 생성 코드는 길이 접두(`Count`)·루프 조건(`Count`)·요소 접근(`[i]`)이 각자 멤버를 다시 평가해서
-/// 게터가 요소 N개당 2N+2회 돌았다 — 계산형 프로퍼티(`public IList&lt;int&gt; Codes =&gt; Build();`)에서는
-/// 길이와 요소가 서로 다른 인스턴스에서 나와 프레임이 스스로 모순될 수 있고, 평범한 자동 프로퍼티에서도
-/// 요소마다 게터·인터페이스 `Count` 호출이 낭비된다(특히 `CollectionsMarshal` 이 없는 Unity/netstandard2.1).
+/// KI-26 regression: collection member writes evaluate the member expression **exactly once** and snapshot it locally.
+/// The previously generated code re-evaluated the member separately for the length prefix (`Count`), the loop
+/// condition (`Count`), and element access (`[i]`), so the getter ran 2N+2 times per N elements. With a computed
+/// property (`public IList&lt;int&gt; Codes =&gt; Build();`) the length and the elements could come from different
+/// instances, letting the frame contradict itself; even plain auto-properties wasted a getter call plus an
+/// interface `Count` call per element (notably on Unity/netstandard2.1, which lacks `CollectionsMarshal`).
 /// </summary>
 public class CollectionSnapshotTests
 {
     [Fact]
-    public void 컬렉션_멤버는_직렬화_중_정확히_한_번만_평가된다()
+    public void collection_member_is_evaluated_exactly_once_during_serialization()
     {
         var message = new SnapshotCollectionMessage();
 
         byte[] bytes = MessageSerializer.Serialize(message);
 
-        // 스냅샷 전: Codes 3개 → 2*3+2 = 8회, Tags 2개 → 6회. 스냅샷 후: 각각 1회.
+        // Before the fix: 3 Codes → 2*3+2 = 8 calls, 2 Tags → 6 calls. After the fix: 1 call each.
         Assert.Equal(1, message.CodesGetterCalls);
         Assert.Equal(1, message.TagsGetterCalls);
 
@@ -30,7 +31,7 @@ public class CollectionSnapshotTests
     }
 
     [Fact]
-    public void 스냅샷_이후에도_빈_컬렉션과_null이_규약대로_기록된다()
+    public void empty_collections_and_null_are_still_written_per_contract_after_snapshot()
     {
         var empty = new SnapshotCollectionMessage { Codes = new List<int>(), Tags = Array.Empty<string>() };
 

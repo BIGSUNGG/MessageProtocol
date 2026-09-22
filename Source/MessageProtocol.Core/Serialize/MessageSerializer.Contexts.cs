@@ -9,7 +9,7 @@ namespace MessageProtocol.Serialize
     public static partial class MessageSerializer
     {
         /// <summary>
-        /// forward-only wire format 의 참조 유형 태그. 값 0/1/2 는 와이어 규격의 일부라 변경할 수 없다.
+        /// Reference-type tags for the forward-only wire format. Values 0/1/2 are part of the wire spec and must not change.
         /// </summary>
         public enum ReferenceKind : byte
         {
@@ -28,8 +28,8 @@ namespace MessageProtocol.Serialize
         }
 
         /// <summary>
-        /// 한 번의 직렬화 동안 공유·순환 참조를 추적하는 컨텍스트.
-        /// 첫 객체는 슬롯만 쓰고, Dictionary 는 두 번째 등록부터 할당된다.
+        /// Context tracking shared and cyclic references during a single serialization.
+        /// The first object uses only the slot; the Dictionary is allocated from the second registration on.
         /// </summary>
         public struct SerializeContext
         {
@@ -38,8 +38,9 @@ namespace MessageProtocol.Serialize
             int _nextObjectId;
 
             /// <summary>
-            /// 이미 등록한 객체의 id 를 찾는다. null 은 거부한다 — null 참조는 <see cref="ReferenceKind.Null"/> 로 써야 하고,
-            /// id 조회 대상으로 삼으면 `_firstObject is null`(빈 슬롯 sentinel)과 구분이 사라진다 (Known-Issues KI-30).
+            /// Finds the id of an already-registered object. Rejects null — a null reference must be written as
+            /// <see cref="ReferenceKind.Null"/>; if it were used as a lookup target it would become indistinguishable from
+            /// the empty-slot sentinel `_firstObject is null` (Known-Issues KI-30).
             /// </summary>
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public bool TryGetObjectId(object value, out int objectId)
@@ -62,9 +63,9 @@ namespace MessageProtocol.Serialize
             }
 
             /// <summary>
-            /// 새 객체를 등록하고 할당된 id 를 반환한다. id 는 1 부터 시작한다.
-            /// null 은 거부한다 — null 을 등록하면 첫 슬롯이 비어 있는 상태로 남아 **다음 객체도 id 1 을 받아**
-            /// 백레퍼런스가 다른 객체를 가리키게 된다(조용한 객체 그래프 손상) — Known-Issues KI-30.
+            /// Registers a new object and returns its assigned id. Ids start at 1.
+            /// Rejects null — registering null would leave the first slot empty so **the next object also gets id 1**, and
+            /// back-references would point at the wrong object (silent object-graph corruption) — Known-Issues KI-30.
             /// </summary>
             public int RegisterObject(object value)
             {
@@ -84,8 +85,8 @@ namespace MessageProtocol.Serialize
                     return 1;
                 }
 
-                // 초기 용량 8: 전형적인 객체 그래프(2~8개 추적 객체)의 첫 리사이즈(1→3→7)를 건너뛴다.
-                // 첫 슬롯 승격 시에만 할당되는 사전이라 빈 사전 비용은 없다(2026-09-08 핫패스 감사 FINDING 3).
+                // Initial capacity 8: skips the first resizes (1→3→7) for typical object graphs (2–8 tracked objects).
+                // The dictionary is allocated only on first-slot promotion, so there is no cost for empty graphs (2026-09-08 hot-path audit FINDING 3).
                 _objectIds = new Dictionary<object, int>(8, ReferenceComparer.Instance)
                 {
                     [_firstObject] = 1,
@@ -98,8 +99,8 @@ namespace MessageProtocol.Serialize
         }
 
         /// <summary>
-        /// 한 번의 역직렬화 동안 id → 객체 역참조를 복원하는 테이블.
-        /// 첫 객체는 슬롯만 쓰고, Dictionary 는 두 번째 등록부터 할당된다.
+        /// Table restoring id → object dereferences during a single deserialization.
+        /// The first object uses only the slot; the Dictionary is allocated from the second registration on.
         /// </summary>
         public struct DeserializeContext
         {
@@ -108,9 +109,9 @@ namespace MessageProtocol.Serialize
             int _nextObjectId;
 
             /// <summary>
-            /// 새로 생성된 객체를 등록하고 id 를 반환한다 (직렬화 시와 동일한 순서여야 한다).
-            /// null 은 거부한다 — <see cref="SerializeContext.RegisterObject"/> 와 같은 이유로 id 1 이 중복 발급되어
-            /// <see cref="GetObject"/> 이 백레퍼런스를 잘못 된 인스턴스로 해석한다 (Known-Issues KI-30).
+            /// Registers a newly created object and returns its id (must match the serialization-time order).
+            /// Rejects null — for the same reason as <see cref="SerializeContext.RegisterObject"/>, id 1 would be issued twice and
+            /// <see cref="GetObject"/> would resolve back-references to the wrong instance (Known-Issues KI-30).
             /// </summary>
             public int RegisterNewObject(object value)
             {
@@ -130,7 +131,7 @@ namespace MessageProtocol.Serialize
                     return 1;
                 }
 
-                _objects = new Dictionary<int, object>(8) // 초기 용량 8 — 리사이즈 지연(위와 같은 근거).
+                _objects = new Dictionary<int, object>(8) // initial capacity 8 — defers resizes (same rationale as above).
                 {
                     [1] = _firstObject,
                 };
@@ -168,9 +169,9 @@ namespace MessageProtocol.Serialize
         }
 
         /// <summary>
-        /// 참조 추적 컨텍스트의 null 거부 — 두 컨텍스트가 공유하는 단일 사유 메시지.
-        /// `_firstObject is null` 이 "빈 슬롯" sentinel 이라서 null 을 등록·조회하면 슬롯이 차지되지 않아
-        /// **id 1 이 중복 발급**되고 백레퍼런스가 다른 인스턴스로 해석된다 (Known-Issues KI-30).
+        /// Null rejection shared by the reference-tracking contexts — a single rationale for both.
+        /// `_firstObject is null` is the "empty slot" sentinel, so registering or looking up null leaves the slot unoccupied,
+        /// **id 1 is issued twice**, and back-references resolve to the wrong instance (Known-Issues KI-30).
         /// </summary>
         [DoesNotReturn]
         [MethodImpl(MethodImplOptions.NoInlining)]

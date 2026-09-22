@@ -6,10 +6,11 @@ using Xunit;
 
 namespace MessageProtocol.Tests.Fixtures
 {
-    // [Message] 종류 자동 추론 픽스처. FullName 해시 ID 핀 값은 테스트 단언에 하드코딩돼 있다 —
-    // 알고리즘(FNV-1a → 24비트 마스크)이나 FullName 형식이 바뀌면 이 파일의 핀 부터 깨진다.
+    // Fixtures for automatic [Message] kind inference. The FullName-hash ID pin values are hard-coded in the
+    // test assertions — if the algorithm (FNV-1a → 24-bit mask) or the FullName format changes, the pins in
+    // this file break first.
 
-    /// <summary>조상 없음 + 파생 없음 → Standalone 추론. FullName "MessageProtocol.Tests.Fixtures.AutoStandalone" 해시 0x1F6FBD.</summary>
+    /// <summary>No ancestors and no derivatives → inferred as Standalone. FullName "MessageProtocol.Tests.Fixtures.AutoStandalone" hashes to 0x1F6FBD.</summary>
     [Message]
     public partial class AutoStandalone
     {
@@ -17,7 +18,7 @@ namespace MessageProtocol.Tests.Fixtures
         public string? Text { get; set; }
     }
 
-    /// <summary>동일 컴파일에 [Message] 파생(A/B) 존재 → GroupRoot 추론. 해시 0xA8E839.</summary>
+    /// <summary>[Message] derivatives (A/B) exist in the same compilation → inferred as GroupRoot. Hash 0xA8E839.</summary>
     [Message]
     public partial class AutoGroupRoot
     {
@@ -37,8 +38,8 @@ namespace MessageProtocol.Tests.Fixtures
         public string? Note { get; set; }
     }
 
-    /// <summary>[Message] 제네릭 선언부 — MessageId 는 선언부 FullName("…AutoGenericEnvelope`1") 해시 0x344C18,
-    /// 닫힌 구성 등록은 기존 [GenericMessage] 수동 ClassId 방식 그대로.</summary>
+    /// <summary>[Message] generic declaration — MessageId is the hash of the declaration FullName ("…AutoGenericEnvelope`1") = 0x344C18;
+    /// closed-construction registration follows the existing [GenericMessage] manual ClassId mechanism.</summary>
     [Message]
     [GenericMessage(typeof(AutoGenericEnvelope<FlatMessage>), ClassId = 1)]
     public partial class AutoGenericEnvelope<T>
@@ -47,8 +48,9 @@ namespace MessageProtocol.Tests.Fixtures
         public int Stamp { get; set; }
     }
 
-    /// <summary>참조 어셈블리(NetStandardFixtures)의 [Message] 베이스 상속 → GroupElement 추론. 해시 0xE93598.
-    /// internal 이어도 생성·등록됨(선언 접근성 그대로 방출) — 검증만 필요하므로 xUnit 발견 대상에서도 제외된다.</summary>
+    /// <summary>[Message] base inherited from a reference assembly (NetStandardFixtures) → inferred as GroupElement. Hash 0xE93598.
+    /// Generated and registered even though internal (emitted with the declaration's accessibility) — it only
+    /// needs to verify, so it is also excluded from xUnit discovery.</summary>
     [Message]
     internal partial class CrossProjectElement : CrossProjectRoot
     {
@@ -61,18 +63,19 @@ namespace MessageProtocol.Tests
     public class MessageAttributeTests
     {
     [Fact]
-    public void Message_추론_Standalone은_해시_ID로_왕복한다()
+    public void message_inference_standalone_round_trips_with_hash_id()
     {
+        // intentional non-ASCII payload: exercises UTF-8 round-trip
         var msg = new AutoStandalone { Value = -77, Text = "자동" };
 
         var rt = MessageSerializer.Deserialize<AutoStandalone>(MessageSerializer.Serialize(msg));
 
         Assert.Equal(-77, rt.Value);
-        Assert.Equal("자동", rt.Text);
+        Assert.Equal("자동", rt.Text); // payload stays Korean on purpose (see above)
     }
 
     [Fact]
-    public void Message_추론_그룹은_object_dispatch로_요소별_왕복한다()
+    public void message_inference_group_round_trips_each_element_via_object_dispatch()
     {
         var a = new AutoGroupElementA { RootValue = 1, RootText = "r", ElementValue = 9 };
         var b = new AutoGroupElementB { RootValue = 2, RootText = "t", Note = "note" };
@@ -85,21 +88,22 @@ namespace MessageProtocol.Tests
     }
 
     [Fact]
-    public void Message_해시_ID는_FullName_FNV1a_24비트_핀값과_일치한다()
+    public void message_hash_id_matches_fullname_fnv1a_24bit_pin_values()
     {
-        // 알고리즘 핀 — 값은 FNV-1a 32(OffsetBasis 2166136261, Prime 16777619) 를 UTF-8 바이트로 돌리고
-        // 0x00FF_FFFF 로 마스크한 것. 헬퍼 호출이 아니라 **리터럴**과 비교해 재구현을 막는다.
+        // Algorithm pin — each value is FNV-1a 32 (OffsetBasis 2166136261, Prime 16777619) over the UTF-8
+        // bytes, masked with 0x00FF_FFFF. Compared against **literals** rather than a helper call to prevent
+        // accidental reimplementation drift.
         Assert.Equal(0x1F6FBDu, MessageIdHash.FromFullName("MessageProtocol.Tests.Fixtures.AutoStandalone"));
 
-        // 와이어 MessageId = 헤더 바이트(flags<<4 | category) << 24 | 해시. category 0.
-        Assert.Equal(0x201F6FBDu, AutoStandalone.MessageId);           // Standalone 플래그(0x2)
-        Assert.Equal(0x40A8E839u, AutoGroupRoot.MessageId);            // GroupRoot 플래그(0x4)
-        Assert.Equal(0x807AE8F6u, AutoGroupElementA.MessageId);        // GroupElement 플래그(0x8)
+        // Wire MessageId = header byte (flags<<4 | category) << 24 | hash. category 0.
+        Assert.Equal(0x201F6FBDu, AutoStandalone.MessageId);           // Standalone flag (0x2)
+        Assert.Equal(0x40A8E839u, AutoGroupRoot.MessageId);            // GroupRoot flag (0x4)
+        Assert.Equal(0x807AE8F6u, AutoGroupElementA.MessageId);        // GroupElement flag (0x8)
         Assert.Equal(0x807AE763u, AutoGroupElementB.MessageId);
     }
 
     [Fact]
-    public void Message_제네릭_선언부는_해시_MessageId로_구성_왕복한다()
+    public void message_generic_declaration_round_trips_constructions_with_hash_messageid()
     {
         object msg = new AutoGenericEnvelope<FlatMessage> { Payload = new FlatMessage { Value = 3 }, Stamp = 5 };
 
@@ -111,10 +115,11 @@ namespace MessageProtocol.Tests
     }
 
     [Fact]
-    public void Message_크로스_어셈블리_상속_요소는_참조_베이스_멤버까지_왕복한다()
+    public void message_cross_assembly_inherited_element_round_trips_including_reference_base_members()
     {
-        // CrossProjectRoot 는 NetStandardFixtures(netstandard2.1) 에서 Standalone 으로 확정돼 있고,
-        // 이 컴파일의 파생은 [Message] 하나로 GroupElement 로 추론·등록된다(와이어 멤버는 참조 베이스 체인에서 병합).
+        // CrossProjectRoot is pinned as Standalone in NetStandardFixtures (netstandard2.1); the derivative in
+        // this compilation is inferred and registered as GroupElement from the single [Message] attribute
+        // (wire members are merged across the reference base chain).
         object msg = new CrossProjectElement { BaseValue = 11, BaseText = "base", DerivedValue = 22 };
 
         var decoded = Assert.IsType<CrossProjectElement>(MessageSerializer.Deserialize(MessageSerializer.Serialize(msg)));

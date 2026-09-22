@@ -7,18 +7,20 @@ using Xunit;
 namespace MessageProtocol.Tests;
 
 /// <summary>
-/// netstandard2.1(Unity 호환 프로필) 어셈블리에서 생성된 코드를 **실행**으로 검증한다.
-/// 그 타깃에는 `CollectionsMarshal` 이 없어 생성기가 `List&lt;T&gt;` 고속 경로 대신 폴백 변형(인덱서 루프)을 방출하는데,
-/// 이 저장소의 테스트는 net8.0/net9.0 라 항상 고속 경로만 실행됐었다 — 폴백 경로는 생성 텍스트 단언에만 의존했다.
-/// 여기서는 폴백 경로에서도 컬렉션 왕복·할당 가드(KI-17)·중첩 깊이 가드(KI-14 읽기, KI-25 쓰기)가 실제로 동작함을 실행으로 고정한다.
+/// Verifies generated code from the netstandard2.1 (Unity-compatible profile) assembly **by execution**.
+/// That target lacks `CollectionsMarshal`, so the generator emits a fallback variant (indexer loop) instead of
+/// the fast `List&lt;T&gt;` path — but because this repo's tests run on net8.0/net9.0, only the fast path ever
+/// executed and the fallback path was covered by generated-text assertions alone. These tests pin, by running
+/// them, that collection round trips, allocation guards (KI-17), and nesting depth guards (KI-14 read, KI-25
+/// write) really work on the fallback path.
 /// </summary>
 public class NetStandardFallbackTests
 {
     [Fact]
-    public void 픽스처_어셈블리는_netstandard2_1_프로필이다()
+    public void fixture_assembly_targets_the_netstandard2_1_profile()
     {
-        // 이 어셈블리가 다른 TFM 으로 바뀌면 CollectionsMarshal 이 생기고 폴백 경로 검증이 조용히 사라진다 —
-        // 커버리지 상실을 실패로 드러내기 위해 프로필 자체를 고정한다.
+        // If this assembly ever moves to a different TFM it gains CollectionsMarshal and the fallback-path
+        // coverage silently disappears — pin the profile itself so coverage loss surfaces as a failure.
         var framework = typeof(FallbackCollections).Assembly
             .GetCustomAttributes(typeof(TargetFrameworkAttribute), false)
             .Cast<TargetFrameworkAttribute>()
@@ -28,11 +30,12 @@ public class NetStandardFallbackTests
     }
 
     [Fact]
-    public void 폴백_컬렉션_5형태가_왕복한다()
+    public void all_five_fallback_collection_shapes_round_trip()
     {
         var message = new FallbackCollections
         {
             Bulk = new List<int> { 1, 2, 3 },
+            // intentional non-ASCII payload: exercises UTF-8 round-trip
             Texts = new List<string> { "a", "bb", "한글" },
             Codes = new List<byte> { 9, 8, 7 },
             Tags = new[] { "x", "y" },
@@ -49,7 +52,7 @@ public class NetStandardFallbackTests
     }
 
     [Fact]
-    public void 폴백_경로에서도_null과_빈_컬렉션_규약이_유지된다()
+    public void null_and_empty_collection_contract_holds_on_fallback_path()
     {
         var nulls = MessageSerializer.Deserialize<FallbackCollections>(
             MessageSerializer.Serialize(new FallbackCollections()));
@@ -77,9 +80,10 @@ public class NetStandardFallbackTests
     }
 
     [Fact]
-    public void 플백_경로에서도_DeserializeExact_왕복이_동작한다()
+    public void deserialize_exact_round_trip_works_on_fallback_path()
     {
-        // KI-43 진입 가드: Unity(netstandard2.1) 폴백 생성 코드에서도 전체 소비 검사 진입이 정상 왕복해야 한다.
+        // KI-43 entry guard: the full-consumption check entry point must round-trip correctly on Unity
+        // (netstandard2.1) fallback generated code too.
         var message = new FallbackCollections
         {
             Bulk = new List<int> { 1, 2, 3 },
@@ -95,10 +99,11 @@ public class NetStandardFallbackTests
     }
 
     [Fact]
-    public void 플백_경로에서도_DeserializeExact_잔여_바이트_거부가_동작한다()
+    public void deserialize_exact_rejects_trailing_bytes_on_fallback_path()
     {
-        // KI-43 진입 가드: 폴백 생성 코드로 읽은 뒤 남은 바이트(스키마 표류 프레임)는
-        // 조용한 유실 대신 InvalidDataException 으로 거부되어야 한다 — Unity 프로필에서도 동일.
+        // KI-43 entry guard: bytes left over after reading with fallback generated code (a schema-drifted
+        // frame) must be rejected with InvalidDataException instead of being silently dropped — same on the
+        // Unity profile.
         byte[] bytes = MessageSerializer.Serialize(new FallbackCollections { Bulk = new List<int> { 1, 2, 3 } });
         byte[] padded = bytes.Concat(new byte[2]).ToArray();
 
@@ -106,10 +111,11 @@ public class NetStandardFallbackTests
     }
 
     [Fact]
-    public void 폴백_List_벌크_할당_가드가_실행된다()
+    public void fallback_list_bulk_allocation_guard_executes()
     {
-        // KI-17: CollectionsMarshal 미지원 타깃의 List<T> 벌크 판독은 `개수×요소크기 ≤ Remaining` 을 할당 전에 검증해야 한다.
-        // 지금까지는 이미터 텍스트 단언으로만 검증됐고, 여기서는 그 가드가 실제로 예외를 던지는지 실행으로 확인한다.
+        // KI-17: List<T> bulk reads on CollectionsMarshal-less targets must verify `count × elementSize ≤
+        // Remaining` before allocating. This was previously covered only by emitter-text assertions; here we
+        // confirm by execution that the guard actually throws.
         byte[] bytes = MessageSerializer.Serialize(new FallbackCollections { Bulk = new List<int> { 1, 2, 3 } });
 
         int offset = FindPattern(bytes, new byte[] { 3, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0 });
@@ -119,20 +125,22 @@ public class NetStandardFallbackTests
     }
 
     [Fact]
-    public void 폴백_경로에서도_쓰기_중첩_깊이_가드가_실행된다()
+    public void write_side_nesting_depth_guard_executes_on_fallback_path()
     {
         FallbackNode shallow = BuildChain(10);
         Assert.Equal(10, CountChain(MessageSerializer.Deserialize<FallbackNode>(MessageSerializer.Serialize(shallow))));
 
-        // KI-25: 기본 상한(64)을 넘는 자기참조 체인은 스택 오버플로 대신 예외로 거부되어야 한다 — 폴백 생성 코드에서도 동일.
+        // KI-25: a self-referencing chain beyond the default limit (64) must be rejected with an exception
+        // instead of a stack overflow — fallback generated code included.
         FallbackNode tooDeep = BuildChain(MessageBufferWriter.DefaultMaxNestingDepth + 1);
         Assert.Throws<InvalidOperationException>(() => MessageSerializer.Serialize(tooDeep));
     }
 
     [Fact]
-    public void 폴백_경로에서도_읽기_중첩_깊이_가드가_실행된다()
+    public void read_side_nesting_depth_guard_executes_on_fallback_path()
     {
-        // 쓰기 상한만 올려 100단계 프레임을 만든 뒤, 기본 상한(64) reader 로 읽으면 거부되어야 한다 (KI-14).
+        // Build a 100-level frame by raising only the write limit, then read it with the default-limit (64)
+        // reader — it must be rejected (KI-14).
         FallbackNode head = BuildChain(100);
         var writer = MessageBufferWriter.Create(256, 512);
         byte[] bytes;
@@ -148,7 +156,7 @@ public class NetStandardFallbackTests
 
         Assert.Throws<InvalidDataException>(() => MessageSerializer.Deserialize<FallbackNode>(bytes));
 
-        // 양쪽 상한을 함께 올리면 같은 프레임이 정상 복호된다.
+        // Raising both limits decodes the same frame fine.
         var reader = new MessageBufferReader(bytes, 512);
         Assert.Equal(100, CountChain(MessageSerializer.Deserialize<FallbackNode>(ref reader)));
     }

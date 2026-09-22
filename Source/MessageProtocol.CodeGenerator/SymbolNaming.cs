@@ -4,9 +4,9 @@ using System.Text;
 namespace MessageProtocol.CodeGenerator
 {
     /// <summary>
-    /// 심볼에서 유일한 식별자 접미사를 만든다.
-    /// 네임스페이스·중첩 타입 체인·제네릭 인자를 모두 포함해 동명 심볼이 겹치지 않게 하고,
-    /// 이름 체계가 우연히 겹치면 사용 접미사 집합으로 구분자를 부여한다.
+    /// Builds a unique identifier suffix from a symbol.
+    /// Includes the namespace, nested-type chain, and generic arguments so identically named symbols never collide;
+    /// if the name scheme collides anyway, a discriminator is appended from the set of used suffixes.
     /// </summary>
     internal static class SymbolNaming
     {
@@ -38,7 +38,7 @@ namespace MessageProtocol.CodeGenerator
                 sb.Append('+');
             }
 
-            // MetadataName 의 제네릭 차수 표기(`)는 유효한 식별자가 아니므로 이후 치환한다.
+            // MetadataName's generic-arity notation (`) is not a valid identifier, so it is replaced later.
             sb.Append(symbol.MetadataName);
 
             foreach (var typeArgument in symbol.TypeArguments)

@@ -8,14 +8,14 @@ using System.Text;
 namespace MessageProtocol.Serialize
 {
     /// <summary>
-    /// Forward-only 풀링 바이트 버퍼 writer. ArrayPool 에서 대여하고 필요 시 자동 증량한다.
-    /// 리틀엔디안 고정 폭 프리미티브 + 길이 접두 문자열/바이트 형식을 쓴다.
+    /// Forward-only pooled byte buffer writer. Rents from ArrayPool and grows automatically when needed.
+    /// Writes little-endian fixed-width primitives plus length-prefixed strings and byte segments.
     /// </summary>
     public ref struct MessageBufferWriter
     {
         /// <summary>
-        /// 기본 중첩 객체 직렬화 깊이 상한. reader 기본 상한과 **의도적으로 동일**하다 —
-        /// 써서 보낼 수 있는 그래프를 상대가 기본 설정으로 읽지 못하는 비대칭을 막는다 (Known-Issues KI-25).
+        /// Default nesting depth limit for serialization. Intentionally identical to the reader's default —
+        /// prevents the asymmetry where a graph you can write cannot be read back by a peer with default settings (Known-Issues KI-25).
         /// </summary>
         public const int DefaultMaxNestingDepth = MessageBufferReader.DefaultMaxNestingDepth;
 
@@ -37,10 +37,10 @@ namespace MessageProtocol.Serialize
             return Create(initialCapacity, DefaultMaxNestingDepth);
         }
 
-        /// <param name="initialCapacity">초기 대여 용량(0 이하는 빈 버퍼로 시작해 첫 쓰기에서 증설).</param>
+        /// <param name="initialCapacity">Initial rented capacity (0 or less starts with an empty buffer and grows on the first write).</param>
         /// <param name="maxNestingDepth">
-        /// 중첩 객체 직렬화 깊이 상한. 합법적으로 깊은 객체 그래프를 다루는 호출자가 올리는 탈출구이며,
-        /// 수신 측도 읽으려면 <see cref="MessageBufferReader(ReadOnlySpan{byte}, int)"/> 로 같은 상한을 맞춰야 한다. 0 이하 거부.
+        /// Nesting depth limit for serialization. An escape hatch for callers with legitimately deep object graphs;
+        /// to read the result back, the receiving side must raise the same limit via <see cref="MessageBufferReader(ReadOnlySpan{byte}, int)"/>. Values of 0 or less are rejected.
         /// </param>
         public static MessageBufferWriter Create(int initialCapacity, int maxNestingDepth)
         {
@@ -56,18 +56,18 @@ namespace MessageProtocol.Serialize
         public Span<byte> WrittenSpan => _buffer.AsSpan(0, _position);
         public ReadOnlySpan<byte> WrittenReadOnlySpan => _buffer.AsSpan(0, _position);
 
-        /// <summary>이 writer 가 허용하는 중첩 객체 깊이 상한.</summary>
+        /// <summary>Maximum nesting depth this writer allows.</summary>
         public int MaxNestingDepth => _maxNestingDepth;
 
-        /// <summary>현재 중첩 깊이 — <see cref="EnterNestedObject"/>·<see cref="LeaveNestedObject"/> 가 관리한다.</summary>
+        /// <summary>Current nesting depth — managed by <see cref="EnterNestedObject"/> and <see cref="LeaveNestedObject"/>.</summary>
         public int NestingDepth => _depth;
 
         /// <summary>
-        /// 중첩 객체 기록 시작을 알린다. 상한 도달 시 <see cref="InvalidOperationException"/> —
-        /// 객체 그래프가 너무 깊거나(긴 연결 리스트·깊은 트리), 런타임 디스패치 멤버를 통해 순환이 흘렀다
-        /// (디스패치 경로는 백레퍼런스를 추적하지 않는다). 가드가 없으면 두 경우 모두 재귀가 스택을
-        /// 소진해 **catch 불가한 스택 오버플로**로 프로세스가 죽는다 (Known-Issues KI-25).
-        /// 생성 코드·<c>SerializeToWriter</c> 가 재귀 지점에서 호출한다.
+        /// Marks the start of a nested object. Throws <see cref="InvalidOperationException"/> once the limit is reached —
+        /// either the object graph is genuinely too deep (long linked list, deep tree) or a cycle leaked in through a
+        /// runtime-dispatched member (the dispatch path does not track back-references). Without this guard, both cases
+        /// exhaust the stack through recursion and kill the process with an **uncatchable stack overflow** (Known-Issues KI-25).
+        /// Generated code and <c>SerializeToWriter</c> call this at every recursion point.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void EnterNestedObject()
@@ -77,8 +77,8 @@ namespace MessageProtocol.Serialize
         }
 
         /// <summary>
-        /// 중첩 객체 기록 종료를 알린다. 짝이 맞지 않는 호출(기록 중 예외)은 깊이를 부풀리기만 하므로
-        /// 가드는 실패 방향으로 안전하다. 음수로 내려가지 않도록 0 에서 클램프(음수 깊이가 상한을 무력화하는 것 차단).
+        /// Marks the end of a nested object. An unmatched call (e.g. an exception mid-write) only inflates the depth,
+        /// so the guard fails in the safe direction. Clamped at 0 so depth never goes negative (a negative depth would disable the limit).
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void LeaveNestedObject()
@@ -86,11 +86,11 @@ namespace MessageProtocol.Serialize
             if (_depth > 0) _depth--;
         }
 
-        /// <summary><paramref name="size"/> 바이트를 쓸 공간을 확보하고 해당 구간을 반환·전진한다.</summary>
+        /// <summary>Reserves room for <paramref name="size"/> bytes and returns the segment, advancing the write position.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Span<byte> GetSpan(int size)
         {
-            // 음수 size 는 Span 생성자가 우연히 던지는 ArgumentOutOfRange 로만 막혀 있었다 — API 계약으로 명문화(KI-37).
+            // Negative sizes used to be blocked only incidentally by the Span constructor's ArgumentOutOfRange — now an explicit API contract (KI-37).
             if (size < 0) ThrowNegativeSpanSize(size);
             EnsureCapacity(size);
             var span = _buffer.AsSpan(_position, size);
@@ -101,7 +101,7 @@ namespace MessageProtocol.Serialize
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Advance(int count)
         {
-            // 음수 Advance 는 위치를 뒤로 돌려 이후 쓰기가 이미 기록한 페이로드를 덮어쓴다 (Known-Issues KI-21).
+            // A negative Advance rewinds the position, so later writes would overwrite already-written payload (Known-Issues KI-21).
             if (count < 0) ThrowNegativeCount(count);
             if ((uint)(_position + count) > (uint)_buffer.Length)
             {
@@ -110,12 +110,12 @@ namespace MessageProtocol.Serialize
             _position += count;
         }
 
-        /// <summary><paramref name="additional"/> 바이트를 더 쓸 수 있음을 보장한다. 생성 코드는 고정 크기 구간을 합산해 1회 호출한다.</summary>
+        /// <summary>Guarantees room for <paramref name="additional"/> more bytes. Generated code sums fixed-size segments and calls this once.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void EnsureCapacity(int additional)
         {
-            // long 비교 — `_position + additional` 을 int 로 더하면 GB 급 요구에서 음수로 오버플로해
-            // 증설 가드가 거짓으로 통과하고 이은 `AsSpan`·`CopyTo` 가 원인을 가리는 예외를 던진다 (Known-Issues KI-7).
+            // long comparison — `_position + additional` in int arithmetic overflows to negative for GB-scale requests,
+            // making the growth guard pass falsely; the subsequent `AsSpan`/`CopyTo` then throws an exception that hides the cause (Known-Issues KI-7).
             if ((long)_position + additional > _buffer.Length)
             {
                 Grow(additional);
@@ -144,18 +144,18 @@ namespace MessageProtocol.Serialize
             _buffer = newBuffer;
         }
 
-        /// <summary>빈 버퍼의 첫 증설 용량(<see cref="MessageWireFormat.DefaultStreamCapacity"/> 와 동일).</summary>
+        /// <summary>First growth capacity for an empty buffer (same as <see cref="MessageWireFormat.DefaultStreamCapacity"/>).</summary>
         const int DefaultGrowCapacity = 256;
 
         /// <summary>
-        /// 증설 용량 산정 — **long 산술** + 배열 상한 clamp (Known-Issues KI-7).
-        /// 이전 공식 `Math.Max(_buffer.Length * 2, required)` 는 버퍼가 1GB 를 넘는 순간 `Length * 2` 가 음수로
-        /// 오버플로해 `Math.Max` 가 항상 `required` 를 고르고, 그래서 매 증설이 **여유 없는 정확 용량** 대여 +
-        /// 전체 복사가 되어 성장 비용이 제곱이 됐다(게다가 그 크기면 풀링도 안 된다). 페이로드 상한
-        /// <see cref="MaxBufferLength"/>(약 2.1GB)은 이 라이브러리가 지원하는 범위라 그 구간에서도 배증이 유지돼야 한다.
+        /// Computes the growth capacity — **long arithmetic** + array upper-bound clamp (Known-Issues KI-7).
+        /// The old formula `Math.Max(_buffer.Length * 2, required)` overflowed to negative in `Length * 2` once the buffer
+        /// passed 1GB, so `Math.Max` always picked `required`. Every growth then rented an **exact-size, zero-headroom**
+        /// array plus a full copy, making growth cost quadratic (and arrays that large are not pooled anyway). The payload
+        /// limit <see cref="MaxBufferLength"/> (~2.1GB) is within this library's supported range, so doubling must hold even there.
         /// </summary>
-        /// <param name="currentCapacity">현재 대여 배열 길이(0 = 빈 버퍼).</param>
-        /// <param name="required">필요 총용량(위치 + 추가) — 호출자가 <see cref="MaxBufferLength"/> 이하임을 보장한다.</param>
+        /// <param name="currentCapacity">Length of the currently rented array (0 = empty buffer).</param>
+        /// <param name="required">Total capacity needed (position + additional) — the caller guarantees ≤ <see cref="MaxBufferLength"/>.</param>
         internal static int ComputeGrowCapacity(int currentCapacity, long required)
         {
             long doubled = currentCapacity <= 0 ? DefaultGrowCapacity : (long)currentCapacity * 2;
@@ -243,7 +243,7 @@ namespace MessageProtocol.Serialize
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void WriteChar(char value) => WriteUInt16(value);
 
-        /// <summary>GetBits 순서(lo, mid, hi, flags)로 16바이트 기록. 중간 할당 없음.</summary>
+        /// <summary>Writes 16 bytes in GetBits order (lo, mid, hi, flags). No intermediate allocation.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void WriteDecimal(decimal value)
         {
@@ -267,7 +267,7 @@ namespace MessageProtocol.Serialize
             _position += value.Length;
         }
 
-        /// <summary>null = int32(-1), 빈 문자열 = int32(0), 그 외 int32(utf8 길이) + utf8 바이트.</summary>
+        /// <summary>null = int32(-1), empty string = int32(0), otherwise int32(utf8 byte length) + utf8 bytes.</summary>
         public void WriteString(string? value)
         {
             if (value is null)
@@ -281,49 +281,49 @@ namespace MessageProtocol.Serialize
                 return;
             }
 
-            // 필요 용량을 long 으로 구한다 — `4 + GetMaxByteCount(int)` 는 초대형 문자열에서 음수로 오버플로해
-            // EnsureCapacity 의 증설을 건너뛰게 하고, 그럼 GetBytes 가 내부 ArgumentException 으로 실패한다 (KI-22).
+            // Computes the required capacity in long — `4 + GetMaxByteCount(int)` overflows to negative for huge strings,
+            // skipping the EnsureCapacity growth; GetBytes then fails with an internal ArgumentException (KI-22).
             long required = GetStringBufferRequirement(value.Length);
             if (_position + required > MaxBufferLength)
             {
                 ThrowStringTooLarge(value.Length);
             }
-            // 위 가드로 required ≤ MaxBufferLength - _position < int.MaxValue 이므로 좁힘과 이후 int 합산이 안전하다.
+            // The guard above ensures required ≤ MaxBufferLength - _position < int.MaxValue, so the narrowing cast and later int arithmetic are safe.
             EnsureCapacity((int)required);
             int written = StrictUtf8.GetBytes(value, 0, value.Length, _buffer, _position + 4);
             BinaryPrimitives.WriteInt32LittleEndian(_buffer.AsSpan(_position), written);
             _position += 4 + written;
         }
 
-        // UTF-8 인코딩 상한 공식(문자당 최대 3바이트 + 프리앰블 3바이트). `Encoding.GetMaxByteCount(int)` 와 같지만
-        // 그 메서드는 약 7.15억 자에서 `charCount * 3 + 3` 이 int 를 넘겨 음수를 반환한다 (Known-Issues KI-22).
+        // UTF-8 upper-bound formula (max 3 bytes per char + 3-byte preamble). Same as `Encoding.GetMaxByteCount(int)`, but
+        // that method returns a negative int once `charCount * 3 + 3` overflows at ~715 million characters (Known-Issues KI-22).
         const long Utf8MaxBytesPerChar = 3;
         const long Utf8PreambleBytes = 3;
         const int LengthPrefixBytes = 4;
 
-        /// <summary>byte[] 버퍼의 최대 길이(.NET 배열 상한) — 이보다 큰 페이로드는 단일 버퍼에 담을 수 없다.</summary>
+        /// <summary>Maximum byte[] buffer length (.NET array limit) — larger payloads cannot fit in a single buffer.</summary>
         const long MaxBufferLength = 0X7FEFFFFFL;
 
-        /// <summary>문자열 페이로드(길이 접두 4바이트 + UTF-8 상한)에 필요한 버퍼 바이트 수를 long 으로 반환한다.</summary>
+        /// <summary>Returns, as a long, the buffer bytes required by a string payload (4-byte length prefix + UTF-8 upper bound).</summary>
         internal static long GetStringBufferRequirement(int charCount)
         {
             return LengthPrefixBytes + (Utf8MaxBytesPerChar * charCount) + Utf8PreambleBytes;
         }
 
-        // 고립 서로게이트를 대체 바이트로 조용히 바꾸면 수신 측이 송신과 다른 문자열을 보므로,
-        // 인코딩 실패를 있는 그대로 표면화하는 엄격 폴백을 쓴다 (와이어 무결성 정책 — Known-Issues KI-20).
+        // Silently replacing lone surrogates with replacement bytes would make the receiver see a different string than the sender,
+        // so a strict fallback surfaces encoding failures as-is (wire integrity policy — Known-Issues KI-20).
         static readonly Encoding StrictUtf8 = Encoding.GetEncoding(65001, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback);
 
         /// <summary>
-        /// 지정 오프셋에 int32 를 다시 쓴다 (외부 프레이밍 등 드문 용도).
-        /// 오프셋은 **이미 기록된 구간**(`0 .. Length - 4`) 안이어야 한다 — 밖이면 대여 배열의 미기록 바이트를
-        /// 건드리고, 그 배열은 나중에 풀로 돌아가므로 다른 대여자에게 보이는 쓰기가 된다 (Known-Issues KI-7).
+        /// Rewrites an int32 at the given offset (rare uses such as external framing).
+        /// The offset must lie inside the **already written** range (`0 .. Length - 4`) — anything else touches unwritten bytes
+        /// of the rented array, which later returns to the pool and becomes a write visible to another renter (Known-Issues KI-7).
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void PatchInt32(int offset, int value)
         {
-            // `_position - 4` 는 음수가 될 수 있으므로 uint 트릭이 아니라 두 비교로 한다
-            // (uint 로 감싸면 Length < 4 일 때 음수가 거대한 양수가 되어 모든 오프셋이 통과한다).
+            // `_position - 4` can be negative, so use two comparisons instead of the uint trick
+            // (wrapping in uint turns the negative into a huge positive when Length < 4, letting every offset pass).
             if (offset < 0 || offset > _position - 4)
             {
                 ThrowPatchOutOfRange(offset);
@@ -332,7 +332,7 @@ namespace MessageProtocol.Serialize
             BinaryPrimitives.WriteInt32LittleEndian(_buffer.AsSpan(offset), value);
         }
 
-        /// <summary>버퍼 소유권을 <see cref="PooledBuffer"/> 로 이전하고 writer 는 비운다.</summary>
+        /// <summary>Transfers buffer ownership to a <see cref="PooledBuffer"/> and empties the writer.</summary>
         public PooledBuffer ToPooledBuffer()
         {
             var owner = PooledBuffer.FromRented(_buffer, _position);
@@ -342,7 +342,7 @@ namespace MessageProtocol.Serialize
             return owner;
         }
 
-        /// <summary>기록된 내용을 새 byte[] 로 복사해 반환한다 (호환 경로).</summary>
+        /// <summary>Copies the written content into a new byte[] and returns it (compatibility path).</summary>
         public byte[] ToArray()
         {
             if (_position == 0) return Array.Empty<byte>();
@@ -386,8 +386,8 @@ namespace MessageProtocol.Serialize
                 "value");
         }
 
-        // writer 쪽 한계 위반은 호출자 데이터·상태 문제라 reader(와이어 내용 불법 = InvalidDataException)와 달리
-        // InvalidOperationException 으로 보고한다 — `ThrowAdvanceBeyondCapacity` 와 동일 기조.
+        // Writer-side limit violations are caller data/state problems, so unlike the reader (illegal wire content = InvalidDataException)
+        // they are reported as InvalidOperationException — same policy as `ThrowAdvanceBeyondCapacity`.
         [MethodImpl(MethodImplOptions.NoInlining)]
         static void ThrowNestingTooDeep(int maxNestingDepth)
         {
