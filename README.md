@@ -4,7 +4,7 @@ A source-generated binary message serialization library for .NET, built for game
 
 - **Targets:** `netstandard2.1` (Unity-compatible) and `net6.0+`
 - **Wire format:** compact binary headers (1–7 bytes) + little-endian payload, strict UTF-8 strings
-- **Version:** 3.2.0
+- **Version:** 3.2.1
 
 ## Packages
 

@@ -3,12 +3,12 @@ project: DS_MessageProtocol
 type: reference
 status: stable
 tags: [packages, nuget]
-updated: 2026-09-14
+updated: 2026-09-22
 ---
 
 # Packages
 
-버전 3.2.0 (재작성 버전. 패키지 아이디는 v1과 동일).
+버전 3.2.1 (재작성 버전. 패키지 아이디는 v1과 동일).
 
 | NuGet 패키지 | 프로젝트 경로 | TFM | 설명 |
 | -------------- | --------------- | ----- | ------ |
@@ -51,7 +51,7 @@ flowchart LR
 
 ## 버전·빌드 구성
 
-- 패키지 Version은 `Source/Directory.Build.props`에서 중앙 관리 (현재 `3.2.0`).
+- 패키지 Version은 `Source/Directory.Build.props`에서 중앙 관리 (현재 `3.2.1`).
 - 루트 `Directory.Build.props` → 기본 `IsPackable=false` (Test·Sandbox 등), `**/generated-out/**` 컴파일 제외 가드.
 - 솔루션 수준 `dotnet build -t:Rebuild` 는 간헐적으로 **CS0006 2건**(분석기 참조 DLL 을 Clean 이 지운 뒤 소비자 CSC 가 못 찾음)을 낸다 — 재현이 불안정한 도구 체인 특성이라 경고 센서스는 솔루션 Rebuild 대신 **프로젝트별로 의존 순서대로 `-t:Rebuild`** 를 도는 쪽을 쓴다.
 - 팩 검증: `dotnet pack MessageProtocol.sln -c Release -o artifacts/packages`.
